@@ -1,0 +1,13 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.pytest_cache
+output
+config.yaml
+.env
+.secrets
+ingest

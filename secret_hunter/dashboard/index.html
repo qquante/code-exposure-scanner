@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#07110f">
+  <title>Secret Hunter — Central de Operações</title>
+  <link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Ir para o conteúdo</a>
+
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+
+  <section class="login-gate" id="login-gate" aria-labelledby="login-title">
+    <div class="login-panel">
+      <div class="brand-lockup brand-lockup-large">
+        <span class="brand-mark" aria-hidden="true"><span></span></span>
+        <div>
+          <strong>SECRET HUNTER</strong>
+          <small>DEFENSIVE OPERATIONS</small>
+        </div>
+      </div>
+      <div class="login-copy">
+        <span class="eyebrow"><i></i> Acesso local protegido</span>
+        <h1 id="login-title">Central de operações</h1>
+        <p>Monitore descoberta, revisão e divulgação responsável sem expor nenhum segredo bruto.</p>
+      </div>
+      <form id="login-form" autocomplete="off">
+        <label for="admin-token">Token administrativo</label>
+        <div class="password-field">
+          <input id="admin-token" name="admin-token" type="password" required
+                 spellcheck="false" autocomplete="off" placeholder="Cole o token de .secrets/admin_api_token.txt">
+          <button class="icon-button" id="toggle-token" type="button" aria-label="Mostrar token">
+            <span class="eye-icon" aria-hidden="true"></span>
+          </button>
+        </div>
+        <p class="field-hint">Permanece somente nesta aba. Não é enviado em URL, cookie ou log.</p>
+        <p class="form-error" id="login-error" role="alert" hidden></p>
+        <button class="button button-primary button-full" type="submit">
+          Entrar no painel <span aria-hidden="true">→</span>
+        </button>
+      </form>
+      <div class="login-security">
+        <span class="security-dot"></span>
+        <span>API vinculada a <strong>127.0.0.1</strong></span>
+        <span>•</span>
+        <span>Dados redigidos</span>
+      </div>
+    </div>
+    <div class="login-visual" aria-hidden="true">
+      <div class="radar">
+        <div class="radar-ring ring-one"></div>
+        <div class="radar-ring ring-two"></div>
+        <div class="radar-ring ring-three"></div>
+        <div class="radar-sweep"></div>
+        <span class="radar-node node-one"></span>
+        <span class="radar-node node-two"></span>
+        <span class="radar-node node-three"></span>
+        <div class="radar-core"><span></span></div>
+      </div>
+      <div class="signal-card signal-card-one">
+        <span>INGESTÃO</span><strong>METADATA ONLY</strong>
+      </div>
+      <div class="signal-card signal-card-two">
+        <span>POLÍTICA</span><strong>HUMAN APPROVAL</strong>
+      </div>
+      <div class="visual-caption">
+        <span>01</span>
+        <p>Detectar cedo.<br>Revisar com contexto.<br>Notificar com cuidado.</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="app-shell" id="app-shell" hidden>
+    <aside class="sidebar">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true"><span></span></span>
+        <div>
+          <strong>SECRET HUNTER</strong>
+          <small>DEFENSIVE OPS</small>
+        </div>
+      </div>
+
+      <nav class="main-nav" aria-label="Navegação principal">
+        <button class="nav-item active" data-view="overview" type="button">
+          <span class="nav-icon">⌂</span><span>Visão geral</span>
+        </button>
+        <button class="nav-item" data-view="candidates" type="button">
+          <span class="nav-icon">◇</span><span>Candidatos</span><b id="nav-candidate-count" hidden>0</b>
+        </button>
+        <button class="nav-item" data-view="findings" type="button">
+          <span class="nav-icon">!</span><span>Achados</span><b id="nav-finding-count" hidden>0</b>
+        </button>
+        <button class="nav-item" data-view="notifications" type="button">
+          <span class="nav-icon">↗</span><span>Notificações</span><b id="nav-notification-count" hidden>0</b>
+        </button>
+        <button class="nav-item" data-view="jobs" type="button">
+          <span class="nav-icon">≋</span><span>Fila de jobs</span>
+        </button>
+        <button class="nav-item" data-view="runs" type="button">
+          <span class="nav-icon">↻</span><span>Execuções</span>
+        </button>
+        <button class="nav-item" data-view="detectors" type="button">
+          <span class="nav-icon">⌁</span><span>Detectores</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="connection-card">
+          <span class="pulse-dot"></span>
+          <div><strong>API conectada</strong><small>PostgreSQL acessível</small></div>
+        </div>
+        <button class="logout-button" id="logout-button" type="button">Encerrar sessão</button>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div class="topbar-context">
+          <button class="mobile-menu" id="mobile-menu" type="button" aria-label="Abrir navegação">☰</button>
+          <div><span>AMBIENTE</span><strong>Local / Defensivo</strong></div>
+        </div>
+        <div class="topbar-actions">
+          <div class="refresh-meta"><span id="last-refresh">Nunca atualizado</span><small>ATUALIZAÇÃO</small></div>
+          <label class="auto-refresh">
+            <input id="auto-refresh" type="checkbox" checked>
+            <span></span><em>Auto</em>
+          </label>
+          <button class="button button-ghost compact" id="refresh-button" type="button">↻ <span>Atualizar</span></button>
+          <button class="button button-primary compact" id="new-scan-button" type="button">＋ <span>Analisar repo</span></button>
+        </div>
+      </header>
+
+      <main id="main-content">
+        <section class="view active" id="view-overview" data-view-panel="overview">
+          <div class="page-heading">
+            <div><span class="eyebrow"><i></i> Monitoramento defensivo</span><h1>Visão operacional</h1><p>Do evento público à divulgação responsável, com aprovação humana em cada fronteira sensível.</p></div>
+            <div class="system-state"><span class="pulse-dot"></span><div><strong>Sistema operacional</strong><small id="system-state-detail">API e banco respondendo</small></div></div>
+          </div>
+
+          <div class="metric-grid">
+            <article class="metric-card accent-amber"><div class="metric-top"><span>Candidatos em revisão</span><span class="metric-symbol">◇</span></div><strong id="metric-candidates">—</strong><p>Esperando decisão humana</p></article>
+            <article class="metric-card accent-red"><div class="metric-top"><span>Achados abertos</span><span class="metric-symbol">!</span></div><strong id="metric-findings">—</strong><p>Credenciais redigidas para triagem</p></article>
+            <article class="metric-card accent-blue"><div class="metric-top"><span>Jobs ativos</span><span class="metric-symbol">≋</span></div><strong id="metric-jobs">—</strong><p>Pendentes e em processamento</p></article>
+            <article class="metric-card accent-green"><div class="metric-top"><span>Alertas para revisar</span><span class="metric-symbol">↗</span></div><strong id="metric-notifications">—</strong><p>Nenhum envio sem aprovação</p></article>
+          </div>
+
+          <div class="overview-grid">
+            <article class="panel activity-panel">
+              <div class="panel-header"><div><span class="panel-kicker">FLUXO RECENTE</span><h2>Atividade operacional</h2></div><button class="text-button" data-view-jump="runs" type="button">Ver execuções →</button></div>
+              <div class="activity-list" id="activity-list"><div class="loading-block"></div><div class="loading-block short"></div><div class="loading-block"></div></div>
+            </article>
+            <article class="panel posture-panel">
+              <div class="panel-header"><div><span class="panel-kicker">POSTURA</span><h2>Controles de segurança</h2></div><span class="status-pill status-safe">PROTEGIDO</span></div>
+              <div class="posture-score"><div class="score-ring"><span>4/4</span></div><div><strong>Fronteiras ativas</strong><p>Os dados sensíveis continuam atrás de revisão explícita.</p></div></div>
+              <ul class="control-list">
+                <li><span>✓</span><div><strong>Sem segredo bruto no banco</strong><small>Fingerprint HMAC e hints fixos</small></div></li>
+                <li><span>✓</span><div><strong>Scan global bloqueado</strong><small>Autorização registrada antes do job</small></div></li>
+                <li><span>✓</span><div><strong>Notificação com aprovação</strong><small>Canal privado priorizado</small></div></li>
+                <li><span>✓</span><div><strong>API somente local</strong><small>Bind em 127.0.0.1</small></div></li>
+              </ul>
+            </article>
+          </div>
+
+          <article class="panel pipeline-panel">
+            <div class="panel-header"><div><span class="panel-kicker">PIPELINE</span><h2>Da descoberta ao alerta</h2></div><span class="muted-label">METADATA → DECISÃO → SCAN → DISCLOSURE</span></div>
+            <div class="pipeline-flow">
+              <div class="pipeline-step"><span>01</span><i class="step-icon">⌁</i><strong>Descoberta</strong><small>Eventos públicos</small></div><b>→</b>
+              <div class="pipeline-step"><span>02</span><i class="step-icon">◇</i><strong>Revisão</strong><small>Metadados e filtros</small></div><b>→</b>
+              <div class="pipeline-step"><span>03</span><i class="step-icon">⌕</i><strong>Scan autorizado</strong><small>Código + histórico</small></div><b>→</b>
+              <div class="pipeline-step"><span>04</span><i class="step-icon">!</i><strong>Triagem</strong><small>Achado redigido</small></div><b>→</b>
+              <div class="pipeline-step"><span>05</span><i class="step-icon">↗</i><strong>Alerta</strong><small>Divulgação privada</small></div>
+            </div>
+          </article>
+        </section>
+
+        <section class="view" id="view-candidates" data-view-panel="candidates" hidden>
+          <div class="page-heading compact-heading"><div><span class="eyebrow"><i></i> Gate de autorização</span><h1>Candidatos</h1><p>Repositórios encontrados globalmente. Nenhum scan ocorre antes da sua aprovação.</p></div></div>
+          <div class="toolbar"><div class="filter-tabs" data-filter-group="candidates"><button class="active" data-filter="all">Todos</button><button data-filter="pending_review">Revisão</button><button data-filter="pending_metadata">Metadados</button><button data-filter="scan_queued">Scan agendado</button><button data-filter="filtered">Filtrados</button></div><input class="search-input" id="candidate-search" type="search" placeholder="Buscar repositório…"></div>
+          <div class="table-panel"><div class="table-scroll"><table><thead><tr><th>Repositório</th><th>Estado</th><th>Linguagem</th><th>Tamanho</th><th>Evento</th><th class="align-right">Ações</th></tr></thead><tbody id="candidate-table"></tbody></table></div><div class="empty-state" id="candidate-empty" hidden><span>◇</span><h3>Nenhum candidato nesta visão</h3><p>Quando o coletor encontrar um repositório elegível, ele aparecerá aqui para revisão.</p></div></div>
+        </section>
+
+        <section class="view" id="view-findings" data-view-panel="findings" hidden>
+          <div class="page-heading compact-heading"><div><span class="eyebrow"><i></i> Triagem segura</span><h1>Achados</h1><p>Segredos identificados sem persistência do valor bruto.</p></div></div>
+          <div class="toolbar"><div class="filter-tabs" data-filter-group="findings"><button class="active" data-filter="all">Todos</button><button data-filter="critical">Críticos</button><button data-filter="high">Altos</button><button data-filter="open">Abertos</button><button data-filter="notified">Notificados</button></div><input class="search-input" id="finding-search" type="search" placeholder="Buscar plataforma ou repo…"></div>
+          <div class="table-panel"><div class="table-scroll"><table><thead><tr><th>Risco</th><th>Repositório</th><th>Tipo / Plataforma</th><th>Ambiente</th><th>Validação</th><th>Localizações</th><th class="align-right">Detalhes</th></tr></thead><tbody id="finding-table"></tbody></table></div><div class="empty-state" id="finding-empty" hidden><span>✓</span><h3>Nenhum achado</h3><p>A fila está limpa. Isso não comprova ausência global de vazamentos.</p></div></div>
+        </section>
+
+        <section class="view" id="view-notifications" data-view-panel="notifications" hidden>
+          <div class="page-heading compact-heading"><div><span class="eyebrow"><i></i> Divulgação responsável</span><h1>Notificações</h1><p>Drafts privados e decisões de envio. O sistema nunca envia sem aprovação.</p></div></div>
+          <div class="toolbar"><div class="filter-tabs" data-filter-group="notifications"><button class="active" data-filter="all">Todas</button><button data-filter="pending_review">Revisão</button><button data-filter="approved">Aprovadas</button><button data-filter="sent">Enviadas</button><button data-filter="needs_contact">Contato manual</button></div></div>
+          <div class="table-panel"><div class="table-scroll"><table><thead><tr><th>Repositório</th><th>Canal</th><th>Estado</th><th>Criado</th><th>Aprovado por</th><th class="align-right">Ações</th></tr></thead><tbody id="notification-table"></tbody></table></div><div class="empty-state" id="notification-empty" hidden><span>↗</span><h3>Nenhum alerta preparado</h3><p>Drafts surgem somente depois que um scan encontra e persiste um achado redigido.</p></div></div>
+        </section>
+
+        <section class="view" id="view-jobs" data-view-panel="jobs" hidden>
+          <div class="page-heading compact-heading"><div><span class="eyebrow"><i></i> Processamento distribuído</span><h1>Fila de jobs</h1><p>Leases, tentativas e erros de cada unidade idempotente de trabalho.</p></div></div>
+          <div class="toolbar"><div class="filter-tabs" data-filter-group="jobs"><button class="active" data-filter="all">Todos</button><button data-filter="pending">Pendentes</button><button data-filter="running">Executando</button><button data-filter="failed">Falhos</button><button data-filter="completed">Concluídos</button></div></div>
+          <div class="table-panel"><div class="table-scroll"><table><thead><tr><th>ID</th><th>Tipo</th><th>Estado</th><th>Tentativas</th><th>Worker / lease</th><th>Atualizado</th><th class="align-right">Detalhes</th></tr></thead><tbody id="job-table"></tbody></table></div><div class="empty-state" id="job-empty" hidden><span>≋</span><h3>Fila vazia</h3><p>Nenhum trabalho pendente ou histórico recente disponível.</p></div></div>
+        </section>
+
+        <section class="view" id="view-runs" data-view-panel="runs" hidden>
+          <div class="page-heading compact-heading"><div><span class="eyebrow"><i></i> Auditoria de execução</span><h1>Execuções</h1><p>Rodadas de busca, histórico e ingestão com contadores consolidados.</p></div></div>
+          <div class="table-panel"><div class="table-scroll"><table><thead><tr><th>ID</th><th>Modo</th><th>Escopo</th><th>Estado</th><th>Jobs</th><th>Achados</th><th>Erros</th><th>Início / fim</th></tr></thead><tbody id="run-table"></tbody></table></div><div class="empty-state" id="run-empty" hidden><span>↻</span><h3>Nenhuma execução registrada</h3><p>Inicie uma análise autorizada para acompanhar seu progresso aqui.</p></div></div>
+        </section>
+
+        <section class="view" id="view-detectors" data-view-panel="detectors" hidden>
+          <div class="page-heading compact-heading"><div><span class="eyebrow"><i></i> Catálogo de cobertura</span><h1>Detectores</h1><p>Tipos reconhecidos, risco atribuído e estratégia de validação defensiva.</p></div><div class="catalog-count"><strong id="detector-count">—</strong><span>detectores ativos</span></div></div>
+          <div class="toolbar"><div class="filter-tabs" data-filter-group="detectors"><button class="active" data-filter="all">Todos</button><button data-filter="payment">Pagamentos</button><button data-filter="cloud">Cloud</button><button data-filter="database">Bancos</button><button data-filter="crypto">Cripto</button><button data-filter="vcs">VCS</button><button data-filter="ai">IA</button></div><input class="search-input" id="detector-search" type="search" placeholder="Buscar detector…"></div>
+          <div class="detector-grid" id="detector-grid"></div><div class="empty-state standalone" id="detector-empty" hidden><span>⌁</span><h3>Nenhum detector encontrado</h3></div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modal-backdrop" hidden>
+    <section class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <header><div><span class="panel-kicker" id="modal-kicker">DETALHES</span><h2 id="modal-title">Detalhes</h2></div><button class="icon-button close-modal" type="button" aria-label="Fechar">×</button></header>
+      <div class="modal-body" id="modal-body"></div>
+      <footer id="modal-footer"></footer>
+    </section>
+  </div>
+
+  <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <script src="/dashboard.js" defer></script>
+</body>
+</html>

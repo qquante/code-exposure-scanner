@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "secret-hunter"
+version = "0.4.0"
+description = "Descoberta defensiva de segredos vazados no GitHub (white-hat / responsible disclosure)."
+requires-python = ">=3.10"
+dependencies = ["requests>=2.32,<3", "PyYAML>=6.0,<7", "mnemonic>=0.21,<1", "redis>=5,<7"]
+
+[project.optional-dependencies]
+crypto = ["eth-account>=0.11", "ecdsa>=0.19", "pycryptodome>=3.20", "PyNaCl>=1.5"]
+postgres = ["psycopg[binary,pool]>=3.2,<4"]
+service = ["fastapi>=0.116,<1", "uvicorn[standard]>=0.35,<1"]
+dev = ["pytest>=8.3,<9"]
+
+[project.scripts]
+secret-hunter = "secret_hunter.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["secret_hunter*"]
+
+[tool.setuptools.package-data]
+secret_hunter = ["schema.sql", "dashboard/*.html", "dashboard/*.css", "dashboard/*.js"]
+
+[tool.pytest.ini_options]
+cache_dir = "/tmp/secret-hunter-pytest-cache"

@@ -1,0 +1,14 @@
+requests>=2.31
+PyYAML>=6.0
+mnemonic>=0.21,<1  # wordlist e checksum BIP39 locais
+redis>=5,<7
+
+# ---------------------------------------------------------------------------
+# Opcionais — validação local de CRIPTO (formato + endereço público).
+# Não há consulta de saldo/RPC; esses pacotes só fazem a derivação local.
+#   EVM      : eth-account>=0.11   OU   coincurve>=18
+#   Bitcoin  : ecdsa>=0.19
+#   keccak   : pycryptodome>=3.20   (necessário se usar ecdsa/coincurve p/ EVM)
+#   Solana   : PyNaCl>=1.5
+# Instalação rápida:  uv pip install eth-account ecdsa pycryptodome PyNaCl
+# ---------------------------------------------------------------------------

@@ -1,0 +1,19 @@
+# Segredos e artefatos locais — nunca commitar
+config.yaml
+output/
+__pycache__/
+*.pyc
+.env
+.secrets/
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Drop-zone pode conter material sensivel. Preserve apenas sua documentacao.
+ingest/*
+!ingest/README.md

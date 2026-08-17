@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "description": "Corpus sintético rotulado para detectores EVM e Solana. Os placeholders são materializados apenas em memória.",
+  "cases": [
+    {"id": "evm_eth_pk", "path": "deploy.env", "template": "ETH_PK={EVM_HEX}", "expected": ["evm_private_key"]},
+    {"id": "evm_base_pk", "path": "base.env", "template": "BASE_PK='{EVM_HEX}'", "expected": ["evm_private_key"]},
+    {"id": "evm_bsc_pk", "path": "bsc.env", "template": "BSC_PK=\"{EVM_HEX}\"", "expected": ["evm_private_key"]},
+    {"id": "evm_robinhood_pk", "path": "robinhood.env", "template": "ROBINHOOD_PK={EVM_HEX}", "expected": ["evm_private_key"]},
+    {"id": "evm_deployer_pk", "path": "scripts/deploy.ts", "template": "DEPLOYER_PK = '{EVM_HEX}'", "expected": ["evm_private_key"]},
+    {"id": "evm_relayer_key", "path": "relayer.py", "template": "RELAYER_KEY = '{EVM_HEX_NO_PREFIX}'", "expected": ["evm_private_key"]},
+    {"id": "evm_ethers_wallet", "path": "wallet.ts", "template": "new ethers.Wallet('{EVM_HEX}')", "expected": ["evm_private_key"]},
+    {"id": "evm_web3_account", "path": "wallet.py", "template": "Account.from_key('{EVM_HEX_NO_PREFIX}')", "expected": ["evm_private_key"]},
+    {"id": "evm_viem_account", "path": "wallet.ts", "template": "privateKeyToAccount('{EVM_HEX}')", "expected": ["evm_private_key"]},
+    {"id": "evm_short_pk_real_env", "path": ".env", "template": "PK={EVM_HEX}", "expected": ["evm_private_key"]},
+
+    {"id": "solana_keypair_id_json", "path": "id.json", "template": "{SOLANA_KEYPAIR_ARRAY}", "expected": ["solana_keypair_json"]},
+    {"id": "solana_keypair_sdk_array", "path": "wallet.ts", "template": "Keypair.fromSecretKey(Uint8Array.from({SOLANA_KEYPAIR_ARRAY}))", "expected": ["solana_keypair_json"]},
+    {"id": "solana_keypair_base58", "path": "wallet.env", "template": "SOLANA_PRIVATE_KEY=\"{SOLANA_KEYPAIR_BASE58}\"", "expected": ["solana_keypair_base58"]},
+    {"id": "solana_keypair_base64", "path": "wallet.env", "template": "SOLANA_PRIVATE_KEY=\"{SOLANA_KEYPAIR_BASE64}\"", "expected": ["solana_keypair_base64"]},
+    {"id": "solana_keypair_hex", "path": "wallet.env", "template": "SOLANA_PRIVATE_KEY=\"{SOLANA_KEYPAIR_HEX}\"", "expected": ["solana_keypair_hex"]},
+
+    {"id": "solana_seed_array", "path": "wallet.ts", "template": "Keypair.fromSeed(Uint8Array.from({SOLANA_SEED_ARRAY}))", "expected": ["solana_seed_array"]},
+    {"id": "solana_seed_base58", "path": "wallet.ts", "template": "Keypair.fromSeed(\"{SOLANA_SEED_BASE58}\")", "expected": ["solana_seed_base58"]},
+    {"id": "solana_seed_base64", "path": "wallet.ts", "template": "Keypair.fromSeed(\"{SOLANA_SEED_BASE64}\")", "expected": ["solana_seed_base64"]},
+    {"id": "solana_seed_hex", "path": "wallet.ts", "template": "Keypair.fromSeed(\"{SOLANA_SEED_HEX}\")", "expected": ["solana_seed_hex"]},
+    {"id": "bip39_valid_checksum", "path": "wallet.env", "template": "MNEMONIC=\"{BIP39_VALID}\"", "expected": ["bip39_mnemonic"]},
+    {"id": "evm_keystore_v3", "path": "keystore/wallet.json", "template": "{EVM_KEYSTORE_V3}", "expected": ["evm_keystore_v3"]},
+
+    {"id": "negative_evm_transaction_hash", "path": "receipt.json", "template": "tx_hash=\"{TX_HASH}\"", "expected": []},
+    {"id": "negative_evm_address", "path": "config.ts", "template": "recipient=\"{EVM_ADDRESS}\"", "expected": []},
+    {"id": "negative_bytes32_hash", "path": "contract.sol", "template": "bytes32 constant ROOT = {BYTES32_HASH};", "expected": []},
+    {"id": "negative_create2_salt", "path": "factory.sol", "template": "CREATE2_SALT=\"{BYTES32_HASH}\"", "expected": []},
+    {"id": "negative_bytecode", "path": "artifact.json", "template": "bytecode=\"{BYTECODE}\"", "expected": []},
+    {"id": "negative_short_pk_template", "path": ".env.example", "template": "PK={EVM_HEX}", "expected": []},
+    {"id": "negative_short_pk_readme", "path": "README.md", "template": "PK={EVM_HEX}", "expected": []},
+    {"id": "negative_solana_public_key", "path": "config.ts", "template": "PUBLIC_KEY=\"{SOLANA_PUBLIC_KEY}\"", "expected": []},
+    {"id": "negative_solana_signature", "path": "verify.ts", "template": "SIGNATURE=\"{SOLANA_SIGNATURE}\"", "expected": []},
+    {"id": "negative_array_64_without_context", "path": "matrix.json", "template": "{ARRAY_64}", "expected": []},
+    {"id": "negative_array_32_without_context", "path": "vector.json", "template": "{ARRAY_32}", "expected": []},
+    {"id": "negative_bip39_checksum", "path": "wallet.env", "template": "MNEMONIC=\"{BIP39_INVALID}\"", "expected": []},
+    {"id": "negative_natural_phrase", "path": "README.md", "template": "{NATURAL_PHRASE}", "expected": []},
+    {"id": "negative_placeholder", "path": ".env.example", "template": "PRIVATE_KEY=your_private_key_here", "expected": []}
+  ]
+}
