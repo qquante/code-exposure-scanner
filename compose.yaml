@@ -13,7 +13,7 @@ x-app-environment: &app-environment
   SH_SEARCH_REQUESTS_PER_MINUTE: ${SEARCH_REQUESTS_PER_MINUTE:-8}
   SH_SEARCH_MAX_PAGES: ${SEARCH_MAX_PAGES:-1}
   SH_SEARCH_WINDOW_HOURS: ${SEARCH_WINDOW_HOURS:-1}
-  SH_SEARCH_TYPES: ${SEARCH_TYPES:-}
+  SH_SEARCH_TYPES: ${SEARCH_TYPES:-evm_private_key_to_account,evm_ethers_wallet,evm_account_from_key,evm_private_key_env,solana_from_secret_key,solana_from_seed,bip39_mnemonic_to_account}
   SH_SCAN_HISTORY: ${SCAN_HISTORY:-true}
   SH_ENTROPY_MIN: ${ENTROPY_MIN:-3.5}
   SH_REQUEST_TIMEOUT: ${REQUEST_TIMEOUT_SECONDS:-10}
@@ -30,17 +30,17 @@ x-app-environment: &app-environment
   SH_INGEST_POLL_SECONDS: ${INGEST_POLL_SECONDS:-60}
   SH_INGEST_MAX_FILE_BYTES: ${INGEST_MAX_FILE_BYTES:-1000000}
   SH_INGEST_ALLOW_SYMLINKS: "false"
-  SH_DISCOVERY_POLL_SECONDS: ${DISCOVERY_POLL_SECONDS:-60}
+  SH_DISCOVERY_POLL_SECONDS: ${DISCOVERY_POLL_SECONDS:-15}
   SH_DISCOVERY_LEASE_SECONDS: ${DISCOVERY_LEASE_SECONDS:-180}
   SH_DISCOVERY_MAX_PAGES: ${DISCOVERY_MAX_PAGES:-10}
   SH_DISCOVERY_WINDOW_SECONDS: ${DISCOVERY_WINDOW_SECONDS:-60}
-  SH_DISCOVERY_HEAD_DELAY_SECONDS: ${DISCOVERY_HEAD_DELAY_SECONDS:-3600}
+  SH_DISCOVERY_HEAD_DELAY_SECONDS: ${DISCOVERY_HEAD_DELAY_SECONDS:-120}
   SH_DISCOVERY_RECONCILE_SECONDS: ${DISCOVERY_RECONCILE_SECONDS:-900}
   SH_DISCOVERY_WINDOWS_PER_POLL: ${DISCOVERY_WINDOWS_PER_POLL:-4}
   SH_DISCOVERY_SEARCH_REQUESTS_PER_MINUTE: ${DISCOVERY_SEARCH_REQUESTS_PER_MINUTE:-24}
   SH_DISCOVERY_METADATA_REQUESTS_PER_HOUR: ${DISCOVERY_METADATA_REQUESTS_PER_HOUR:-3000}
   SH_DISCOVERY_REPOSITORIES_PER_POLL: ${DISCOVERY_REPOSITORIES_PER_POLL:-1000}
-  SH_DISCOVERY_AUTO_QUEUE_SCANS: ${DISCOVERY_AUTO_QUEUE_SCANS:-false}
+  SH_DISCOVERY_AUTO_QUEUE_SCANS: ${DISCOVERY_AUTO_QUEUE_SCANS:-true}
   SH_DISCOVERY_INCLUDE_FORKS: ${DISCOVERY_INCLUDE_FORKS:-false}
   SH_DISCOVERY_LANGUAGES: ${DISCOVERY_LANGUAGES:-}
   SH_DISCOVERY_MIN_SIZE_KB: ${DISCOVERY_MIN_SIZE_KB:-1}
@@ -48,10 +48,23 @@ x-app-environment: &app-environment
   SH_DISCOVERY_HEAD_SCAN_MAX_FILES: ${DISCOVERY_HEAD_SCAN_MAX_FILES:-2000}
   SH_DISCOVERY_HEAD_SCAN_MAX_TOTAL_BYTES: ${DISCOVERY_HEAD_SCAN_MAX_TOTAL_BYTES:-20000000}
   SH_DISCOVERY_HEAD_SCAN_TIMEOUT_SECONDS: ${DISCOVERY_HEAD_SCAN_TIMEOUT_SECONDS:-120}
-  SH_DISCOVERY_HEAD_SCAN_SAMPLE_PERCENT: ${DISCOVERY_HEAD_SCAN_SAMPLE_PERCENT:-5}
-  SH_DISCOVERY_HEAD_TRIGGER_CATEGORIES: ${DISCOVERY_HEAD_TRIGGER_CATEGORIES:-crypto}
-  SH_DISCOVERY_MAX_EVENT_AGE_HOURS: ${DISCOVERY_MAX_EVENT_AGE_HOURS:-48}
+  SH_DISCOVERY_HEAD_SCAN_SAMPLE_PERCENT: ${DISCOVERY_HEAD_SCAN_SAMPLE_PERCENT:-100}
+  SH_DISCOVERY_LIVE_MAX_AGE_MINUTES: ${DISCOVERY_LIVE_MAX_AGE_MINUTES:-20}
+  SH_DISCOVERY_MAX_EVENT_AGE_HOURS: ${DISCOVERY_MAX_EVENT_AGE_HOURS:-4}
   SH_DISCOVERY_RETENTION_DAYS: ${DISCOVERY_RETENTION_DAYS:-30}
+
+x-redis-environment: &redis-environment
+  SH_EVENT_BUS_ENABLED: ${EVENT_BUS_ENABLED:-true}
+  SH_EVENT_BUS_PREFIX: ${EVENT_BUS_PREFIX:-secret-hunter}
+  SH_EVENT_BUS_BLOCK_MS: ${EVENT_BUS_BLOCK_MS:-5000}
+  SH_EVENT_BUS_CLAIM_IDLE_MS: ${EVENT_BUS_CLAIM_IDLE_MS:-180000}
+  SH_EVENT_BUS_DISPATCH_BATCH: ${EVENT_BUS_DISPATCH_BATCH:-500}
+  SH_EVENT_BUS_DISPATCH_INTERVAL_MS: ${EVENT_BUS_DISPATCH_INTERVAL_MS:-250}
+  SH_EVIDENCE_REDIS_HOST: redis-evidence
+  SH_EVIDENCE_REDIS_PORT: "6379"
+  SH_EVIDENCE_REDIS_PASSWORD_FILE: /run/secrets/redis_evidence_password
+  SH_EVIDENCE_ENCRYPTION_KEY_FILE: /run/secrets/evidence_encryption_key
+  SH_EVIDENCE_STREAM_KEY: ${RAW_EVIDENCE_STREAM_KEY:-secret-hunter:raw-evidence}
 
 x-ingest-volume: &ingest-volume
   type: bind
@@ -92,6 +105,31 @@ services:
       timeout: 3s
       retries: 12
       start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+
+  redis-test:
+    profiles: ["test"]
+    image: ${REDIS_IMAGE:-redis:8.2-alpine}
+    entrypoint: ["/bin/sh", "/usr/local/bin/secret-hunter-redis"]
+    environment:
+      REDIS_PASSWORD_FILE: /run/secrets/redis_evidence_password
+    secrets:
+      - redis_evidence_password
+    volumes:
+      - type: bind
+        source: ./docker/redis-entrypoint.sh
+        target: /usr/local/bin/secret-hunter-redis
+        read_only: true
+    tmpfs:
+      - /data:size=256m,mode=0700
+      - /tmp:size=16m,mode=1777
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$(cat /run/secrets/redis_evidence_password)\" redis-cli ping | grep -q PONG"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
     security_opt:
       - no-new-privileges:true
 
@@ -154,12 +192,14 @@ services:
       context: .
     restart: unless-stopped
     environment:
-      <<: *app-environment
+      <<: [*app-environment, *redis-environment]
       SH_ADMIN_API_TOKEN_FILE: /run/secrets/admin_api_token
     secrets:
       - postgres_password
       - fingerprint_key
       - admin_api_token
+      - redis_evidence_password
+      - evidence_encryption_key
     ports:
       - "${API_BIND_IP:-127.0.0.1}:${API_PORT:-8000}:8000"
     volumes:
@@ -167,6 +207,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      redis-evidence:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -180,28 +222,85 @@ services:
       retries: 5
     <<: *app-security
 
-  worker:
+  redis-dispatcher:
+    profiles: ["scanner", "discovery", "ingest"]
+    build:
+      context: .
+    command: ["secret-hunter", "redis-dispatcher"]
+    restart: unless-stopped
+    environment:
+      <<: [*app-environment, *redis-environment]
+    secrets:
+      - postgres_password
+      - fingerprint_key
+      - redis_evidence_password
+      - evidence_encryption_key
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis-evidence:
+        condition: service_healthy
+    <<: *app-security
+
+  event-indexer:
+    profiles: ["scanner", "discovery", "ingest"]
+    build:
+      context: .
+    command: ["secret-hunter", "event-indexer"]
+    restart: unless-stopped
+    environment:
+      <<: [*app-environment, *redis-environment]
+    secrets:
+      - postgres_password
+      - fingerprint_key
+      - redis_evidence_password
+      - evidence_encryption_key
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis-evidence:
+        condition: service_healthy
+    <<: *app-security
+
+  search-worker:
     profiles: ["scanner"]
     build:
       context: .
-    command:
-      ["secret-hunter", "worker", "--kinds", "github_search,fetch_blob,scan_history"]
+    command: ["secret-hunter", "redis-worker", "--stage", "search"]
     restart: unless-stopped
     environment:
-      <<: *app-environment
+      <<: [*app-environment, *redis-environment]
       GITHUB_SEARCH_TOKEN_FILE: /run/secrets/github_search_token
       SH_EVIDENCE_ENABLED: ${RAW_EVIDENCE_ENABLED:-true}
-      SH_EVIDENCE_REDIS_HOST: redis-evidence
-      SH_EVIDENCE_REDIS_PORT: "6379"
-      SH_EVIDENCE_REDIS_PASSWORD_FILE: /run/secrets/redis_evidence_password
-      SH_EVIDENCE_STREAM_KEY: ${RAW_EVIDENCE_STREAM_KEY:-secret-hunter:raw-evidence}
     secrets:
       - postgres_password
       - fingerprint_key
       - github_search_token
       - redis_evidence_password
-    volumes:
-      - *ingest-volume
+      - evidence_encryption_key
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis-evidence:
+        condition: service_healthy
+    <<: *app-security
+
+  blob-worker:
+    profiles: ["scanner"]
+    build:
+      context: .
+    command: ["secret-hunter", "redis-worker", "--stage", "blob"]
+    restart: unless-stopped
+    environment:
+      <<: [*app-environment, *redis-environment]
+      GITHUB_SEARCH_TOKEN_FILE: /run/secrets/github_search_token
+      SH_EVIDENCE_ENABLED: ${RAW_EVIDENCE_ENABLED:-true}
+    secrets:
+      - postgres_password
+      - fingerprint_key
+      - github_search_token
+      - redis_evidence_password
+      - evidence_encryption_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -228,17 +327,22 @@ services:
     profiles: ["ingest"]
     build:
       context: .
-    command: ["secret-hunter", "worker", "--kinds", "scan_ingested_file"]
+    command: ["secret-hunter", "redis-worker", "--stage", "ingest"]
     restart: unless-stopped
-    environment: *app-environment
+    environment:
+      <<: [*app-environment, *redis-environment]
     secrets:
       - postgres_password
       - fingerprint_key
+      - redis_evidence_password
+      - evidence_encryption_key
     volumes:
       - *ingest-volume
     depends_on:
       migrate:
         condition: service_completed_successfully
+      redis-evidence:
+        condition: service_healthy
     <<: *app-security
 
   ingest-watcher:
@@ -271,12 +375,14 @@ services:
       SH_EVIDENCE_REDIS_HOST: redis-evidence
       SH_EVIDENCE_REDIS_PORT: "6379"
       SH_EVIDENCE_REDIS_PASSWORD_FILE: /run/secrets/redis_evidence_password
+      SH_EVIDENCE_ENCRYPTION_KEY_FILE: /run/secrets/evidence_encryption_key
       SH_EVIDENCE_STREAM_KEY: ${RAW_EVIDENCE_STREAM_KEY:-secret-hunter:raw-evidence}
     secrets:
       - postgres_password
       - fingerprint_key
       - github_search_token
       - redis_evidence_password
+      - evidence_encryption_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -284,25 +390,162 @@ services:
         condition: service_healthy
     <<: *app-security
 
-  discovery-worker:
+  metadata-worker:
     profiles: ["discovery"]
     build:
       context: .
-    command: ["secret-hunter", "worker", "--kinds", "enrich_repository_candidate,scan_history"]
+    command: ["secret-hunter", "redis-worker", "--stage", "metadata"]
     restart: unless-stopped
+    deploy:
+      replicas: 2
     environment:
-      <<: *app-environment
+      <<: [*app-environment, *redis-environment]
       GITHUB_SEARCH_TOKEN_FILE: /run/secrets/github_search_token
       SH_EVIDENCE_ENABLED: ${RAW_EVIDENCE_ENABLED:-true}
-      SH_EVIDENCE_REDIS_HOST: redis-evidence
-      SH_EVIDENCE_REDIS_PORT: "6379"
-      SH_EVIDENCE_REDIS_PASSWORD_FILE: /run/secrets/redis_evidence_password
-      SH_EVIDENCE_STREAM_KEY: ${RAW_EVIDENCE_STREAM_KEY:-secret-hunter:raw-evidence}
     secrets:
       - postgres_password
       - fingerprint_key
       - github_search_token
       - redis_evidence_password
+      - evidence_encryption_key
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis-evidence:
+        condition: service_healthy
+    <<: *app-security
+
+  metadata-live-worker:
+    profiles: ["discovery"]
+    build:
+      context: .
+    command: ["secret-hunter", "redis-worker", "--stage", "metadata-live"]
+    restart: unless-stopped
+    deploy:
+      replicas: 4
+    environment:
+      <<: [*app-environment, *redis-environment]
+      GITHUB_SEARCH_TOKEN_FILE: /run/secrets/github_search_token
+      SH_EVIDENCE_ENABLED: ${RAW_EVIDENCE_ENABLED:-true}
+    secrets:
+      - postgres_password
+      - fingerprint_key
+      - github_search_token
+      - redis_evidence_password
+      - evidence_encryption_key
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis-evidence:
+        condition: service_healthy
+    <<: *app-security
+
+  metadata-backfill-worker:
+    profiles: ["discovery"]
+    build:
+      context: .
+    command: ["secret-hunter", "redis-worker", "--stage", "metadata-backfill"]
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+    environment:
+      <<: [*app-environment, *redis-environment]
+      GITHUB_SEARCH_TOKEN_FILE: /run/secrets/github_search_token
+      SH_EVIDENCE_ENABLED: ${RAW_EVIDENCE_ENABLED:-true}
+    secrets:
+      - postgres_password
+      - fingerprint_key
+      - github_search_token
+      - redis_evidence_password
+      - evidence_encryption_key
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis-evidence:
+        condition: service_healthy
+    <<: *app-security
+
+  head-worker:
+    profiles: ["discovery"]
+    build:
+      context: .
+    command: ["secret-hunter", "redis-worker", "--stage", "head"]
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+    environment:
+      <<: [*app-environment, *redis-environment]
+    secrets:
+      - postgres_password
+      - fingerprint_key
+      - redis_evidence_password
+      - evidence_encryption_key
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis-evidence:
+        condition: service_healthy
+    <<: *app-security
+
+  head-live-worker:
+    profiles: ["discovery"]
+    build:
+      context: .
+    command: ["secret-hunter", "redis-worker", "--stage", "head-live"]
+    restart: unless-stopped
+    deploy:
+      replicas: 8
+    environment:
+      <<: [*app-environment, *redis-environment]
+    secrets:
+      - postgres_password
+      - fingerprint_key
+      - redis_evidence_password
+      - evidence_encryption_key
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis-evidence:
+        condition: service_healthy
+    <<: *app-security
+
+  head-backfill-worker:
+    profiles: ["discovery"]
+    build:
+      context: .
+    command: ["secret-hunter", "redis-worker", "--stage", "head-backfill"]
+    restart: unless-stopped
+    deploy:
+      replicas: 4
+    environment:
+      <<: [*app-environment, *redis-environment]
+    secrets:
+      - postgres_password
+      - fingerprint_key
+      - redis_evidence_password
+      - evidence_encryption_key
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis-evidence:
+        condition: service_healthy
+    <<: *app-security
+
+  history-worker:
+    profiles: ["discovery"]
+    build:
+      context: .
+    command: ["secret-hunter", "redis-worker", "--stage", "history"]
+    restart: unless-stopped
+    deploy:
+      replicas: 4
+    environment:
+      <<: [*app-environment, *redis-environment]
+    secrets:
+      - postgres_password
+      - fingerprint_key
+      - redis_evidence_password
+      - evidence_encryption_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -336,13 +579,21 @@ services:
       target: test
     command: ["python", "-m", "pytest", "-q"]
     environment:
-      <<: *app-environment
+      <<: [*app-environment, *redis-environment]
       SH_DATABASE_HOST: postgres-test
+      SH_EVIDENCE_REDIS_HOST: redis-test
+      SH_EVENT_BUS_PREFIX: secret-hunter-test
+      SH_EVENT_BUS_BLOCK_MS: "10"
+      SH_EVENT_BUS_CLAIM_IDLE_MS: "1000"
     secrets:
       - postgres_password
       - fingerprint_key
+      - redis_evidence_password
+      - evidence_encryption_key
     depends_on:
       postgres-test:
+        condition: service_healthy
+      redis-test:
         condition: service_healthy
     restart: "no"
     <<: *app-security
@@ -360,6 +611,8 @@ secrets:
     file: ${ADMIN_API_TOKEN_FILE:-./.secrets/admin_api_token.txt}
   redis_evidence_password:
     file: ${REDIS_EVIDENCE_PASSWORD_FILE:-./.secrets/redis_evidence_password.txt}
+  evidence_encryption_key:
+    file: ${EVIDENCE_ENCRYPTION_KEY_FILE:-./.secrets/evidence_encryption_key.txt}
   github_search_token:
     file: ${GITHUB_SEARCH_TOKEN_FILE:-./.secrets/github_search_token.txt}
   github_notify_token:

@@ -14,6 +14,7 @@ from typing import Any
 
 from .config import Config
 from .disclosure import GitHubDisclosureClient
+from .event_bus import RedisStreamBus, STAGES, stage_for_job
 from .discovery import (
     PUBLIC_REPOSITORIES_KEY,
     GitHubPublicEventsClient,
@@ -32,6 +33,7 @@ from .history_scan import (
 from .ingest import build_ingest_adapter, read_verified_text
 from .postgres import PostgresStore
 from .patterns import PATTERN_SET_ID
+from .scan_policy import filter_crypto_wallet_findings, is_dependency_path
 from .validate import validate as validate_finding
 
 
@@ -142,25 +144,23 @@ def schedule_ingest(
     return run_id, discovered, created
 
 
-def _filter_findings_by_category(
-    findings: list[Finding],
-    categories: tuple[str, ...],
-) -> list[Finding]:
-    allowed = {item.strip().lower() for item in categories if item.strip()}
-    if "*" in allowed:
-        return findings
-    return [finding for finding in findings if finding.category.lower() in allowed]
-
-
 def _persist_findings(
     store: PostgresStore,
     cfg: Config,
     findings: list[Finding],
     *,
     run_id: int | None,
+    job_id: int | None = None,
+    stage: str = "finding",
+    event_bus: RedisStreamBus | None = None,
 ) -> int:
     created = 0
-    for finding in dedupe(findings):
+    scoped_findings = filter_crypto_wallet_findings(dedupe(findings))
+    scoped_ids = {id(finding) for finding in scoped_findings}
+    for finding in findings:
+        if id(finding) not in scoped_ids:
+            finding.secret_raw = ""
+    for finding in scoped_findings:
         try:
             canonical = normalize_github_repo(finding.repo)
             if (
@@ -169,15 +169,52 @@ def _persist_findings(
                 and cfg.is_validation_authorized(canonical)
             ):
                 validate_finding(finding, cfg)
-            _, inserted = store.upsert_finding(finding, run_id=run_id)
+            finding_id, inserted = store.upsert_finding(finding, run_id=run_id)
             created += int(inserted)
+            if event_bus is not None:
+                location_key = hashlib.sha256(
+                    (
+                        f"{finding_id}\0{finding.source}\0{finding.path}\0"
+                        f"{finding.commit}\0{finding.blob_sha}\0{finding.line}"
+                    ).encode("utf-8")
+                ).hexdigest()[:20]
+                event_bus.publish_event(
+                    "finding.detected",
+                    event_key=f"finding:{finding_id}:{location_key}",
+                    stage=stage,
+                    job_id=job_id,
+                    kind="finding",
+                    payload={
+                        "finding_id": finding_id,
+                        "repository": canonical or finding.repo,
+                        "type_id": finding.type_id,
+                        "platform": finding.provider,
+                        "category": finding.category,
+                        "risk": finding.risk,
+                        "fingerprint": finding.fingerprint,
+                        "validation_status": finding.validate_status or "not_checked",
+                        "source": finding.source,
+                        "path": finding.path,
+                        "branch": finding.branch,
+                        "commit_sha": finding.commit,
+                        "blob_sha": finding.blob_sha,
+                        "line": max(finding.line, 0),
+                        "inserted": bool(inserted),
+                    },
+                )
         finally:
             # Strings Python são imutáveis: isto remove a referência, não promete zeroização.
             finding.secret_raw = ""
     return created
 
 
-def _handle_search(store: PostgresStore, cfg: Config, job: dict[str, Any]) -> None:
+def _handle_search(
+    store: PostgresStore,
+    cfg: Config,
+    job: dict[str, Any],
+    *,
+    event_bus: RedisStreamBus | None = None,
+) -> None:
     payload = _payload(job)
 
     def reserve_search_request() -> None:
@@ -218,6 +255,8 @@ def _handle_search(store: PostgresStore, cfg: Config, job: dict[str, Any]) -> No
             repo = item.get("repository", {}).get("full_name", "")
             path = item.get("path", "")
             blob_sha = item.get("sha", "")
+            if is_dependency_path(path):
+                continue
             canonical = normalize_github_repo(repo)
             if canonical is None or not path or not blob_sha:
                 continue
@@ -243,6 +282,7 @@ def _handle_search(store: PostgresStore, cfg: Config, job: dict[str, Any]) -> No
                         "repo": canonical,
                         "path": path,
                         "blob_sha": blob_sha,
+                        "branch": metadata.default_branch,
                         "matched_type": payload.get("type_id", ""),
                     },
                     run_id=job.get("run_id"),
@@ -258,9 +298,18 @@ def _handle_search(store: PostgresStore, cfg: Config, job: dict[str, Any]) -> No
     )
 
 
-def _handle_blob(store: PostgresStore, cfg: Config, job: dict[str, Any]) -> None:
+def _handle_blob(
+    store: PostgresStore,
+    cfg: Config,
+    job: dict[str, Any],
+    *,
+    event_bus: RedisStreamBus | None = None,
+) -> None:
     payload = _payload(job)
     repo = str(payload["repo"])
+    path = str(payload["path"])
+    if is_dependency_path(path):
+        return
     client = GitHubClient(cfg)
     try:
         text = client.fetch_blob(repo, str(payload["blob_sha"]))
@@ -268,34 +317,37 @@ def _handle_blob(store: PostgresStore, cfg: Config, job: dict[str, Any]) -> None
         client.close()
     if text is None:
         raise RuntimeError("blob indisponível ou acima do limite")
-    findings = extract_from_text(text, repo=repo, path=str(payload["path"]), source="code")
-    if cfg.search_types and str(payload.get("matched_type") or "") in cfg.search_types:
-        findings = _filter_findings_by_category(
-            findings,
-            cfg.discovery_head_trigger_categories,
-        )
+    findings = filter_crypto_wallet_findings(
+        extract_from_text(text, repo=repo, path=path, source="code")
+    )
     for finding in findings:
         finding.blob_sha = str(payload["blob_sha"])
-    _persist_findings(store, cfg, findings, run_id=job.get("run_id"))
+        finding.branch = str(payload.get("branch") or "")
+    _persist_findings(
+        store,
+        cfg,
+        findings,
+        run_id=job.get("run_id"),
+        job_id=int(job.get("id") or 0),
+        stage=stage_for_job(job),
+        event_bus=event_bus,
+    )
 
 
-def _handle_history(store: PostgresStore, cfg: Config, job: dict[str, Any]) -> None:
+def _handle_history(
+    store: PostgresStore,
+    cfg: Config,
+    job: dict[str, Any],
+    *,
+    event_bus: RedisStreamBus | None = None,
+) -> None:
     payload = _payload(job)
     repo = str(payload["repo"])
     url = f"https://github.com/{repo}"
     mode = str(payload.get("mode") or "history")
     if mode == "head":
         result = HeadGitScanner(cfg).scan_repo(url)
-        detected_findings = list(result.findings)
-        trigger_categories = {
-            item.strip().lower()
-            for item in cfg.discovery_head_trigger_categories
-            if item.strip()
-        }
-        findings = _filter_findings_by_category(
-            detected_findings,
-            tuple(trigger_categories),
-        )
+        findings = filter_crypto_wallet_findings(result.findings)
         expand_history = bool(findings)
         repository_ref = hashlib.sha256(repo.encode("utf-8")).hexdigest()[:12]
         print(
@@ -303,7 +355,15 @@ def _handle_history(store: PostgresStore, cfg: Config, job: dict[str, Any]) -> N
             f"bytes={result.bytes_scanned} findings={len(findings)} "
             f"truncated={result.truncated} history={expand_history}"
         )
-        _persist_findings(store, cfg, findings, run_id=job.get("run_id"))
+        _persist_findings(
+            store,
+            cfg,
+            findings,
+            run_id=job.get("run_id"),
+            job_id=int(job.get("id") or 0),
+            stage=stage_for_job(job),
+            event_bus=event_bus,
+        )
         if expand_history:
             natural_key = str(payload.get("history_natural_key") or "")
             if not natural_key:
@@ -330,11 +390,29 @@ def _handle_history(store: PostgresStore, cfg: Config, job: dict[str, Any]) -> N
         findings = trufflehog_scan(url, cfg)
     else:
         findings = NativeGitScanner(cfg).scan_repo(url)
-    _persist_findings(store, cfg, findings, run_id=job.get("run_id"))
+    findings = filter_crypto_wallet_findings(findings)
+    _persist_findings(
+        store,
+        cfg,
+        findings,
+        run_id=job.get("run_id"),
+        job_id=int(job.get("id") or 0),
+        stage=stage_for_job(job),
+        event_bus=event_bus,
+    )
 
 
-def _handle_ingested_file(store: PostgresStore, cfg: Config, job: dict[str, Any]) -> None:
+def _handle_ingested_file(
+    store: PostgresStore,
+    cfg: Config,
+    job: dict[str, Any],
+    *,
+    event_bus: RedisStreamBus | None = None,
+) -> None:
     payload = _payload(job)
+    logical_path = str(payload["logical_path"])
+    if is_dependency_path(logical_path):
+        return
     text = read_verified_text(
         cfg.ingest_root,
         str(payload["source_path"]),
@@ -345,13 +423,21 @@ def _handle_ingested_file(store: PostgresStore, cfg: Config, job: dict[str, Any]
     findings = extract_from_text(
         text,
         repo=str(payload["repository"]),
-        path=str(payload["logical_path"]),
+        path=logical_path,
         source="ingest",
     )
     for finding in findings:
         finding.branch = str(payload.get("branch", ""))
         finding.commit = str(payload.get("commit_sha", ""))
-    _persist_findings(store, cfg, findings, run_id=job.get("run_id"))
+    _persist_findings(
+        store,
+        cfg,
+        findings,
+        run_id=job.get("run_id"),
+        job_id=int(job.get("id") or 0),
+        stage=stage_for_job(job),
+        event_bus=event_bus,
+    )
 
 
 def _selected_for_head_scan(github_repository_id: int, sample_percent: int) -> bool:
@@ -360,7 +446,11 @@ def _selected_for_head_scan(github_repository_id: int, sample_percent: int) -> b
 
 
 def _handle_repository_candidate(
-    store: PostgresStore, cfg: Config, job: dict[str, Any]
+    store: PostgresStore,
+    cfg: Config,
+    job: dict[str, Any],
+    *,
+    event_bus: RedisStreamBus | None = None,
 ) -> None:
     payload = _payload(job)
     candidate_id = int(payload["candidate_id"])
@@ -423,10 +513,17 @@ def _handle_repository_candidate(
             candidate_id,
             trufflehog=True,
             pattern_set_id=PATTERN_SET_ID,
+            queue_lane=str(payload.get("queue_lane") or "") or None,
         )
 
 
-def handle_job(store: PostgresStore, cfg: Config, job: dict[str, Any]) -> None:
+def handle_job(
+    store: PostgresStore,
+    cfg: Config,
+    job: dict[str, Any],
+    *,
+    event_bus: RedisStreamBus | None = None,
+) -> None:
     handlers = {
         "github_search": _handle_search,
         "fetch_blob": _handle_blob,
@@ -437,7 +534,7 @@ def handle_job(store: PostgresStore, cfg: Config, job: dict[str, Any]) -> None:
     handler = handlers.get(str(job["kind"]))
     if handler is None:
         raise ValueError(f"tipo de job desconhecido: {job['kind']}")
-    handler(store, cfg, job)
+    handler(store, cfg, job, event_bus=event_bus)
 
 
 def run_worker(
@@ -502,6 +599,262 @@ def run_worker(
                 future.result()
 
 
+def dispatch_jobs_once(
+    store: PostgresStore,
+    bus: RedisStreamBus,
+    *,
+    batch: int = 500,
+) -> tuple[int, int]:
+    """Move o log monotônico de jobs PostgreSQL para streams Redis por estágio."""
+    cursor = bus.dispatcher_cursor()
+    jobs = store.list_jobs_after(cursor, limit=batch)
+    published = 0
+    for job in jobs:
+        job_id = int(job["id"])
+        if str(job.get("status") or "") in {"pending", "running"}:
+            entry_id, created = bus.publish_job(job)
+            stage = stage_for_job(job)
+            bus.publish_event(
+                "job.dispatched",
+                event_key=f"job:{job_id}:dispatched",
+                stage=stage,
+                job_id=job_id,
+                kind=str(job.get("kind") or ""),
+                payload={
+                    "redis_entry_id": entry_id,
+                    "created": created,
+                    "priority": int(job.get("priority") or 0),
+                    "status": str(job.get("status") or "pending"),
+                },
+            )
+            published += int(created)
+        bus.advance_dispatcher_cursor(job_id)
+    return len(jobs), published
+
+
+def run_redis_dispatcher(cfg: Config, *, once: bool = False) -> None:
+    store = PostgresStore(cfg)
+    bus = RedisStreamBus.from_config(cfg)
+    try:
+        while True:
+            scanned, published = dispatch_jobs_once(
+                store,
+                bus,
+                batch=cfg.event_bus_dispatch_batch,
+            )
+            if scanned:
+                print(f"redis-dispatcher: lidos={scanned} publicados={published}")
+            if once:
+                return
+            if scanned < cfg.event_bus_dispatch_batch:
+                time.sleep(cfg.event_bus_dispatch_interval_ms / 1000)
+    finally:
+        bus.close()
+        store.close()
+
+
+def _process_redis_job_message(
+    store: PostgresStore,
+    cfg: Config,
+    bus: RedisStreamBus,
+    *,
+    stage: str,
+    consumer: str,
+    message_id: str,
+    fields: dict[str, str],
+) -> str:
+    try:
+        job_id = int(fields["job_id"])
+        advertised = {
+            "kind": fields.get("kind", ""),
+            "payload": fields.get("payload", "{}"),
+        }
+        if fields.get("stage") != stage or stage_for_job(advertised) != stage:
+            raise ValueError("mensagem roteada para stage incorreto")
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        bus.publish_dead_letter(
+            stage=stage,
+            message_id=message_id,
+            fields=fields,
+            error=f"invalid_message: {exc}",
+        )
+        bus.ack_job(stage, message_id)
+        return "dead_letter"
+
+    worker = f"redis:{consumer}"
+    job = store.claim_job_by_id(job_id, worker)
+    if job is None:
+        state = store.get_job_state(job_id)
+        if state is None:
+            bus.publish_dead_letter(
+                stage=stage,
+                message_id=message_id,
+                fields=fields,
+                error="job_not_found",
+            )
+            bus.ack_job(stage, message_id)
+            return "dead_letter"
+        status = str(state.get("status") or "")
+        if status in {"completed", "failed"}:
+            bus.publish_event(
+                f"job.{status}",
+                event_key=f"job:{job_id}:{status}",
+                stage=stage,
+                job_id=job_id,
+                kind=str(state.get("kind") or fields.get("kind") or ""),
+                payload={"reconciled": True, "attempts": int(state.get("attempts") or 0)},
+            )
+            bus.ack_job(stage, message_id)
+            return status
+        return "deferred"
+
+    heartbeat_stop = threading.Event()
+
+    def heartbeat() -> None:
+        interval = max(cfg.job_lease_seconds / 3, 5)
+        while not heartbeat_stop.wait(interval):
+            try:
+                if not store.extend_job_lease(job_id, worker):
+                    return
+            except Exception:
+                return
+
+    heartbeat_thread = threading.Thread(
+        target=heartbeat,
+        name=f"redis-lease-{job_id}",
+        daemon=True,
+    )
+    heartbeat_thread.start()
+    try:
+        handle_job(store, cfg, job, event_bus=bus)
+    except Exception as exc:
+        terminal = int(job["attempts"]) >= int(job["max_attempts"])
+        store.fail_job(job, worker, f"{type(exc).__name__}: {exc}")
+        event_type = "job.failed" if terminal else "job.retry"
+        bus.publish_event(
+            event_type,
+            event_key=(
+                f"job:{job_id}:failed"
+                if terminal
+                else f"job:{job_id}:retry:{int(job['attempts'])}"
+            ),
+            stage=stage,
+            job_id=job_id,
+            kind=str(job.get("kind") or ""),
+            payload={
+                "attempts": int(job["attempts"]),
+                "max_attempts": int(job["max_attempts"]),
+                "error_type": type(exc).__name__,
+            },
+        )
+        if terminal:
+            bus.ack_job(stage, message_id)
+            return "failed"
+        return "retry"
+    else:
+        if not store.complete_job(job_id, worker):
+            return "deferred"
+        bus.publish_event(
+            "job.completed",
+            event_key=f"job:{job_id}:completed",
+            stage=stage,
+            job_id=job_id,
+            kind=str(job.get("kind") or ""),
+            payload={"attempts": int(job["attempts"])},
+        )
+        bus.ack_job(stage, message_id)
+        return "completed"
+    finally:
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=2)
+
+
+def run_redis_stage_worker(
+    cfg: Config,
+    *,
+    stage: str,
+    once: bool = False,
+) -> None:
+    if stage not in STAGES:
+        raise ValueError(f"stage Redis inválido: {stage}")
+    store = PostgresStore(cfg)
+    bus = RedisStreamBus.from_config(cfg)
+    consumer = f"{cfg.worker_name}:{os.getpid()}:{stage}"
+    try:
+        while True:
+            messages = bus.reclaim_idle(stage, consumer, count=1)
+            if not messages:
+                messages = bus.read_new(stage, consumer, count=1)
+            if not messages:
+                if once:
+                    return
+                continue
+            for message_id, fields in messages:
+                result = _process_redis_job_message(
+                    store,
+                    cfg,
+                    bus,
+                    stage=stage,
+                    consumer=consumer,
+                    message_id=message_id,
+                    fields=fields,
+                )
+                print(
+                    f"redis-worker stage={stage} message={message_id} "
+                    f"job={fields.get('job_id', '')} result={result}"
+                )
+    finally:
+        bus.close()
+        store.close()
+
+
+def _index_pipeline_event(
+    store: PostgresStore,
+    bus: RedisStreamBus,
+    *,
+    message_id: str,
+    fields: dict[str, str],
+) -> str:
+    try:
+        store.record_pipeline_event(message_id, fields)
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        bus.publish_dead_letter(
+            stage="events",
+            message_id=message_id,
+            fields=fields,
+            error=f"invalid_event: {exc}",
+        )
+        bus.ack_event(message_id)
+        return "dead_letter"
+    bus.ack_event(message_id)
+    return "indexed"
+
+
+def run_event_indexer(cfg: Config, *, once: bool = False) -> None:
+    store = PostgresStore(cfg)
+    bus = RedisStreamBus.from_config(cfg)
+    consumer = f"{cfg.worker_name}:{os.getpid()}:event-indexer"
+    try:
+        while True:
+            messages = bus.reclaim_events(consumer, count=25)
+            if not messages:
+                messages = bus.read_events(consumer, count=25)
+            if not messages:
+                if once:
+                    return
+                continue
+            for message_id, fields in messages:
+                _index_pipeline_event(
+                    store,
+                    bus,
+                    message_id=message_id,
+                    fields=fields,
+                )
+    finally:
+        bus.close()
+        store.close()
+
+
 def run_notification_worker(cfg: Config, *, once: bool = False) -> None:
     store = PostgresStore(cfg)
     client = GitHubDisclosureClient(cfg)
@@ -559,7 +912,7 @@ def poll_public_repositories_once(
     client: GitHubPublicEventsClient | None = None,
     owner: str | None = None,
 ) -> dict[str, Any]:
-    """Processa primeiro o head e usa 48h apenas como limite de recuperação."""
+    """Processa o head primeiro e usa o horizonte configurado só para recuperação."""
     lease_owner = owner or f"{cfg.worker_name}:{os.getpid()}:discovery"
     checkpoint = store.claim_discovery_checkpoint(
         PUBLIC_REPOSITORIES_KEY,

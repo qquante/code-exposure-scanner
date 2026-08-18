@@ -24,7 +24,8 @@ def test_dashboard_assets_are_packaged_and_have_no_remote_dependencies() -> None
     assert '<link rel="stylesheet" href="/dashboard.css">' in index
     assert '<script src="/dashboard.js" defer></script>' in index
     assert "http://" not in index + css + javascript
-    assert "https://" not in index + css + javascript
+    assert "https://" not in index + css
+    assert "https://github.com/" in javascript
     assert "localStorage" not in javascript
     assert "document.cookie" not in javascript
     assert 'sessionStorage.getItem("sh_admin_token")' in javascript
@@ -37,17 +38,21 @@ def test_dashboard_exposes_all_operational_sections_and_actions() -> None:
 
     for section in (
         "overview", "candidates", "findings", "notifications",
-        "jobs", "runs", "detectors",
+        "jobs", "pipeline", "runs", "detectors",
     ):
         assert f'data-view-panel="{section}"' in index
     for endpoint in (
         "/stats", "/candidates?limit=500", "/findings?limit=500",
         "/notifications?limit=500", "/jobs?limit=500", "/runs?limit=500",
-        "/detectors", "/jobs/repository",
+        "/detectors", "/events?limit=500", "/streams", "/jobs/repository",
     ):
         assert endpoint in javascript
     assert "/authorize-scan" in javascript
     assert "authorization_reference" in javascript
+    assert "githubLocationUrl" in javascript
+    assert "latest_commit_sha" in javascript
+    assert "window.setInterval(refreshLive, 2000)" in javascript
+    assert 'rel="noopener noreferrer"' in javascript
 
 
 def test_dashboard_mobile_breakpoint_releases_desktop_sidebar_column() -> None:
@@ -64,7 +69,7 @@ def test_dashboard_route_is_registered_and_points_to_local_file() -> None:
     paths = {route.path for route in app.routes}
     response = dashboard()
 
-    assert {"/", "/dashboard.css", "/dashboard.js"}.issubset(paths)
+    assert {"/", "/dashboard.css", "/dashboard.js", "/events", "/streams"}.issubset(paths)
     assert Path(response.path).resolve() == (DASHBOARD / "index.html").resolve()
     assert response.media_type == "text/html"
 

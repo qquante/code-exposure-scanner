@@ -10,8 +10,8 @@ from secret_hunter.head_scan import HeadGitScanner, HeadScanResult
 
 def _finding(category: str = "crypto") -> Finding:
     return Finding(
-        type_id="evm_private_key",
-        provider="EVM",
+        type_id="evm_private_key" if category == "crypto" else "aws_access_key",
+        provider="EVM" if category == "crypto" else "AWS",
         category=category,
         risk="critical",
         secret_redacted="0x1111…1111",
@@ -42,6 +42,21 @@ def test_head_tree_scan_prioritizes_sensitive_files_and_respects_limits(tmp_path
     assert any(item.category == "crypto" for item in result.findings)
     assert all(item.commit == "abc123" for item in result.findings)
 
+
+
+def test_head_tree_scan_skips_vendored_dependencies(tmp_path) -> None:
+    dependency = tmp_path / "backend" / "node_modules" / "dotenv"
+    dependency.mkdir(parents=True)
+    evm_fixture = hashlib.sha256(b"dependency-fixture-must-not-be-scanned").hexdigest()
+    (dependency / "README.md").write_text(
+        f"PRIVATE_KEY=0x{evm_fixture}", encoding="utf-8"
+    )
+    (tmp_path / "app.py").write_text('print("ok")', encoding="utf-8")
+
+    result = HeadGitScanner(Config()).scan_tree(tmp_path, repo="acme/demo")
+
+    assert result.files_scanned == 1
+    assert result.findings == ()
 
 class _Store:
     def __init__(self) -> None:
@@ -76,7 +91,7 @@ def _run_head_job(monkeypatch, findings: tuple[Finding, ...]) -> _Store:
     store = _Store()
     pipeline.handle_job(
         store,  # type: ignore[arg-type]
-        Config(discovery_head_trigger_categories=("crypto",)),
+        Config(),
         {
             "kind": "scan_history",
             "run_id": 7,
@@ -90,16 +105,6 @@ def _run_head_job(monkeypatch, findings: tuple[Finding, ...]) -> _Store:
         },
     )
     return store
-
-
-def test_automatic_finding_filter_keeps_only_configured_categories() -> None:
-    findings = [_finding("crypto"), _finding("cloud")]
-
-    filtered = pipeline._filter_findings_by_category(findings, ("crypto",))
-
-    assert [finding.category for finding in filtered] == ["crypto"]
-    assert pipeline._filter_findings_by_category(findings, ("*",)) == findings
-    assert pipeline._filter_findings_by_category(findings, ()) == []
 
 
 def test_head_scan_log_hides_repository_name(monkeypatch, capsys) -> None:

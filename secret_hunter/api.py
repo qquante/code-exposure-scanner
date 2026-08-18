@@ -12,7 +12,9 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .config import Config
+from .event_bus import RedisStreamBus
 from .patterns import SECRET_TYPES
+from .scan_policy import CRYPTO_WALLET_TYPE_IDS
 from .patterns import PATTERN_SET_ID
 from .pipeline import schedule_ingest, schedule_repository, schedule_search
 from .postgres import PostgresStore
@@ -163,6 +165,7 @@ def detectors(_: str = Depends(_admin)) -> list[dict]:
             "validation": detector.verify_note,
         }
         for detector in SECRET_TYPES
+        if detector.type_id in CRYPTO_WALLET_TYPE_IDS
     ]
 
 
@@ -203,6 +206,24 @@ def runs(
     store: PostgresStore = Depends(_store),
 ) -> list[dict]:
     return store.list_runs(limit=limit)
+
+
+@app.get("/events")
+def events(
+    limit: int = Query(100, ge=1, le=500),
+    _: str = Depends(_admin),
+    store: PostgresStore = Depends(_store),
+) -> list[dict]:
+    return store.list_pipeline_events(limit=limit)
+
+
+@app.get("/streams")
+def streams(request: Request, _: str = Depends(_admin)) -> list[dict]:
+    bus = RedisStreamBus.from_config(request.app.state.cfg)
+    try:
+        return bus.stream_stats()
+    finally:
+        bus.close()
 
 
 @app.get("/candidates")

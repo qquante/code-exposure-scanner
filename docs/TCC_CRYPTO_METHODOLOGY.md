@@ -50,7 +50,6 @@ são classificados como chave.
 | `solana_seed_base64` | Base64/Base64URL de 32 bytes | contexto explícito de seed |
 | `solana_seed_hex` | hex de 32 bytes | contexto explícito de seed Solana |
 | `bip39_mnemonic` | 12, 15, 18, 21 ou 24 palavras | contexto + wordlist inglesa + checksum BIP39 |
-| `private_key_pem` | PEM PKCS/OpenSSH/EC/RSA | bloco BEGIN/END privado completo |
 
 Keystore EVM v3 é artefato sensível, mas não equivale a uma private key em texto
 puro. Ele possui tipo e risco separados para não inflar artificialmente a métrica
@@ -85,6 +84,7 @@ O corpus de regressão deve conter, no mínimo:
 - mnemonic com palavra ou checksum inválido;
 - keystore EVM criptografado separado de chave em texto puro;
 - placeholders e fixtures explicitamente marcadas.
+- exemplos e documentação dentro de dependências vendorizadas (`node_modules`, ambientes Python, `.pnpm`, `.yarn`).
 
 ## Métricas acadêmicas
 
@@ -114,6 +114,7 @@ persistir o segredo bruto.
 1. Somente repositórios públicos dentro da janela declarada.
 2. Nenhuma consulta de saldo, RPC, explorer, autenticação, assinatura ou broadcast.
 3. Nenhum segredo bruto no PostgreSQL, log, dashboard, relatório ou dataset do TCC.
+   As respostas HTTP preservadas no Redis são cifradas com AES-256-GCM antes da persistência.
 4. Resultados acadêmicos apenas agregados; exemplos usam fixtures sintéticas.
 5. Divulgação externa permanece separada e exige revisão humana.
 6. Uma detecção `not_checked` significa apenas detecção passiva.

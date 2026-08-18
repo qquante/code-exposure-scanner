@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .config import Config
 from .extract import Finding, extract_from_text
+from .scan_policy import is_dependency_path
 from .history_scan import normalize_github_repo
 
 
@@ -93,15 +94,20 @@ class HeadGitScanner:
         root = root.resolve()
         candidates: list[tuple[str, Path]] = []
         for current, directories, files in os.walk(root, followlinks=False):
-            directories[:] = sorted(
-                name for name in directories if name != ".git"
-            )
             current_path = Path(current)
+            directories[:] = sorted(
+                name
+                for name in directories
+                if name != ".git"
+                and not is_dependency_path((current_path / name).relative_to(root).as_posix())
+            )
             for name in sorted(files):
                 path = current_path / name
                 if path.is_symlink() or not path.is_file():
                     continue
                 relative = path.relative_to(root).as_posix()
+                if is_dependency_path(relative):
+                    continue
                 candidates.append((relative, path))
 
         candidates.sort(key=lambda item: self._priority(item[0]))

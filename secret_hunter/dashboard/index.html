@@ -100,6 +100,9 @@
         <button class="nav-item" data-view="jobs" type="button">
           <span class="nav-icon">≋</span><span>Fila de jobs</span>
         </button>
+        <button class="nav-item" data-view="pipeline" type="button">
+          <span class="nav-icon">⇄</span><span>Pipeline Redis</span>
+        </button>
         <button class="nav-item" data-view="runs" type="button">
           <span class="nav-icon">↻</span><span>Execuções</span>
         </button>
@@ -137,12 +140,12 @@
       <main id="main-content">
         <section class="view active" id="view-overview" data-view-panel="overview">
           <div class="page-heading">
-            <div><span class="eyebrow"><i></i> Monitoramento defensivo</span><h1>Visão operacional</h1><p>Do evento público à divulgação responsável, com aprovação humana em cada fronteira sensível.</p></div>
+            <div><span class="eyebrow"><i></i> Monitoramento defensivo</span><h1>Visão operacional</h1><p>Do evento público ao achado cripto, com filas Redis independentes e rastreabilidade por estágio.</p></div>
             <div class="system-state"><span class="pulse-dot"></span><div><strong>Sistema operacional</strong><small id="system-state-detail">API e banco respondendo</small></div></div>
           </div>
 
           <div class="metric-grid">
-            <article class="metric-card accent-amber"><div class="metric-top"><span>Candidatos em revisão</span><span class="metric-symbol">◇</span></div><strong id="metric-candidates">—</strong><p>Esperando decisão humana</p></article>
+            <article class="metric-card accent-amber"><div class="metric-top"><span>Candidatos em revisão</span><span class="metric-symbol">◇</span></div><strong id="metric-candidates">—</strong><p>Elegíveis seguem automaticamente</p></article>
             <article class="metric-card accent-red"><div class="metric-top"><span>Achados abertos</span><span class="metric-symbol">!</span></div><strong id="metric-findings">—</strong><p>Credenciais redigidas para triagem</p></article>
             <article class="metric-card accent-blue"><div class="metric-top"><span>Jobs ativos</span><span class="metric-symbol">≋</span></div><strong id="metric-jobs">—</strong><p>Pendentes e em processamento</p></article>
             <article class="metric-card accent-green"><div class="metric-top"><span>Alertas para revisar</span><span class="metric-symbol">↗</span></div><strong id="metric-notifications">—</strong><p>Nenhum envio sem aprovação</p></article>
@@ -155,10 +158,10 @@
             </article>
             <article class="panel posture-panel">
               <div class="panel-header"><div><span class="panel-kicker">POSTURA</span><h2>Controles de segurança</h2></div><span class="status-pill status-safe">PROTEGIDO</span></div>
-              <div class="posture-score"><div class="score-ring"><span>4/4</span></div><div><strong>Fronteiras ativas</strong><p>Os dados sensíveis continuam atrás de revisão explícita.</p></div></div>
+              <div class="posture-score"><div class="score-ring"><span>4/4</span></div><div><strong>Fronteiras ativas</strong><p>Detecção automática; validação online e contato externo continuam restritos.</p></div></div>
               <ul class="control-list">
                 <li><span>✓</span><div><strong>Sem segredo bruto no banco</strong><small>Fingerprint HMAC e hints fixos</small></div></li>
-                <li><span>✓</span><div><strong>Scan global bloqueado</strong><small>Autorização registrada antes do job</small></div></li>
+                <li><span>✓</span><div><strong>Scan cripto automático</strong><small>100% dos candidatos elegíveis entram na fila</small></div></li>
                 <li><span>✓</span><div><strong>Notificação com aprovação</strong><small>Canal privado priorizado</small></div></li>
                 <li><span>✓</span><div><strong>API somente local</strong><small>Bind em 127.0.0.1</small></div></li>
               </ul>
@@ -166,11 +169,11 @@
           </div>
 
           <article class="panel pipeline-panel">
-            <div class="panel-header"><div><span class="panel-kicker">PIPELINE</span><h2>Da descoberta ao alerta</h2></div><span class="muted-label">METADATA → DECISÃO → SCAN → DISCLOSURE</span></div>
+            <div class="panel-header"><div><span class="panel-kicker">PIPELINE</span><h2>Da descoberta ao alerta</h2></div><span class="muted-label">DISCOVERY → REDIS → HEAD → HISTORY → FINDING</span></div>
             <div class="pipeline-flow">
               <div class="pipeline-step"><span>01</span><i class="step-icon">⌁</i><strong>Descoberta</strong><small>Eventos públicos</small></div><b>→</b>
-              <div class="pipeline-step"><span>02</span><i class="step-icon">◇</i><strong>Revisão</strong><small>Metadados e filtros</small></div><b>→</b>
-              <div class="pipeline-step"><span>03</span><i class="step-icon">⌕</i><strong>Scan autorizado</strong><small>Código + histórico</small></div><b>→</b>
+              <div class="pipeline-step"><span>02</span><i class="step-icon">◇</i><strong>Redis</strong><small>Fila por estágio</small></div><b>→</b>
+              <div class="pipeline-step"><span>03</span><i class="step-icon">⌕</i><strong>HEAD automático</strong><small>Todos os elegíveis</small></div><b>→</b>
               <div class="pipeline-step"><span>04</span><i class="step-icon">!</i><strong>Triagem</strong><small>Achado redigido</small></div><b>→</b>
               <div class="pipeline-step"><span>05</span><i class="step-icon">↗</i><strong>Alerta</strong><small>Divulgação privada</small></div>
             </div>
@@ -178,7 +181,7 @@
         </section>
 
         <section class="view" id="view-candidates" data-view-panel="candidates" hidden>
-          <div class="page-heading compact-heading"><div><span class="eyebrow"><i></i> Gate de autorização</span><h1>Candidatos</h1><p>Repositórios encontrados globalmente. Nenhum scan ocorre antes da sua aprovação.</p></div></div>
+          <div class="page-heading compact-heading"><div><span class="eyebrow"><i></i> Descoberta automática</span><h1>Candidatos</h1><p>Todos os repositórios encontrados; elegíveis seguem automaticamente para o HEAD.</p></div></div>
           <div class="toolbar"><div class="filter-tabs" data-filter-group="candidates"><button class="active" data-filter="all">Todos</button><button data-filter="pending_review">Revisão</button><button data-filter="pending_metadata">Metadados</button><button data-filter="scan_queued">Scan agendado</button><button data-filter="filtered">Filtrados</button></div><input class="search-input" id="candidate-search" type="search" placeholder="Buscar repositório…"></div>
           <div class="table-panel"><div class="table-scroll"><table><thead><tr><th>Repositório</th><th>Estado</th><th>Linguagem</th><th>Tamanho</th><th>Evento</th><th class="align-right">Ações</th></tr></thead><tbody id="candidate-table"></tbody></table></div><div class="empty-state" id="candidate-empty" hidden><span>◇</span><h3>Nenhum candidato nesta visão</h3><p>Quando o coletor encontrar um repositório elegível, ele aparecerá aqui para revisão.</p></div></div>
         </section>
@@ -199,6 +202,13 @@
           <div class="page-heading compact-heading"><div><span class="eyebrow"><i></i> Processamento distribuído</span><h1>Fila de jobs</h1><p>Leases, tentativas e erros de cada unidade idempotente de trabalho.</p></div></div>
           <div class="toolbar"><div class="filter-tabs" data-filter-group="jobs"><button class="active" data-filter="all">Todos</button><button data-filter="pending">Pendentes</button><button data-filter="running">Executando</button><button data-filter="failed">Falhos</button><button data-filter="completed">Concluídos</button></div></div>
           <div class="table-panel"><div class="table-scroll"><table><thead><tr><th>ID</th><th>Tipo</th><th>Estado</th><th>Tentativas</th><th>Worker / lease</th><th>Atualizado</th><th class="align-right">Detalhes</th></tr></thead><tbody id="job-table"></tbody></table></div><div class="empty-state" id="job-empty" hidden><span>≋</span><h3>Fila vazia</h3><p>Nenhum trabalho pendente ou histórico recente disponível.</p></div></div>
+        </section>
+
+        <section class="view" id="view-pipeline" data-view-panel="pipeline" hidden>
+          <div class="page-heading compact-heading"><div><span class="eyebrow"><i></i> Redis Streams</span><h1>Pipeline independente</h1><p>Lag, pendências, consumidores e eventos sanitizados de cada estágio.</p></div></div>
+          <article class="panel"><div class="panel-header"><div><span class="panel-kicker">CONSUMER GROUPS</span><h2>Streams por estágio</h2></div></div><div class="table-scroll"><table><thead><tr><th>Estágio</th><th>Stream</th><th>Mensagens</th><th>Pendentes</th><th>Consumidores</th><th>Lag</th></tr></thead><tbody id="stream-table"></tbody></table></div></article>
+          <div class="section-spacer"></div>
+          <article class="panel"><div class="panel-header"><div><span class="panel-kicker">EVENT LOG</span><h2>Eventos indexados</h2></div></div><div class="table-scroll"><table><thead><tr><th>Evento</th><th>Estágio</th><th>Job</th><th>Tipo</th><th>Dados sanitizados</th><th>Horário</th></tr></thead><tbody id="event-table"></tbody></table></div><div class="empty-state" id="event-empty" hidden><span>⇄</span><h3>Nenhum evento indexado</h3><p>O indexador preencherá esta visão assim que os workers processarem mensagens.</p></div></article>
         </section>
 
         <section class="view" id="view-runs" data-view-panel="runs" hidden>

@@ -51,6 +51,17 @@ Um mesmo segredo pode ter várias localizações sem duplicar o achado.
 
 A chave natural contém o hash da versão dos detectores. Assim, workers duplicados não repetem o mesmo trabalho, mas uma mudança de regex permite reprocessamento.
 
+## `pipeline_events` e Redis Streams
+
+`pipeline_events` é o índice administrativo dos eventos sanitizados emitidos pelos
+workers. Guarda `event_key` único, ID da entrada Redis, tipo, estágio, job, kind,
+payload JSON redigido e timestamps. A unicidade de `event_key` torna a indexação
+idempotente. Essa tabela não substitui `scan_jobs` e não guarda segredo bruto.
+
+Redis contém um stream por estágio e consumer group, o stream de eventos, a
+dead-letter e o corpus bruto separado. As mensagens operacionais carregam IDs e
+metadados sanitizados; o estado autoritativo continua no PostgreSQL. Veja
+[REDIS_PIPELINE.md](REDIS_PIPELINE.md).
 ## `notification_outbox` e `notification_findings`
 
 A outbox guarda título, draft privado, texto público genérico, status, aprovação, URL externa e erros. `notification_findings` relaciona todos os achados agregados. Há no máximo um draft ativo por repositório/canal; após envio, um achado novo cria outro lote.

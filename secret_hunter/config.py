@@ -61,7 +61,17 @@ class Config:
     evidence_redis_port: int = 6379
     evidence_redis_db: int = 0
     evidence_redis_password: str = field(default="", repr=False)
+    evidence_encryption_key: str = field(default="", repr=False)
     evidence_stream_key: str = "secret-hunter:raw-evidence"
+
+    # Redis Streams transporta jobs/eventos entre containers independentes.
+    # O PostgreSQL continua responsavel por idempotencia e estado consultavel.
+    event_bus_enabled: bool = False
+    event_bus_prefix: str = "secret-hunter"
+    event_bus_block_ms: int = 5_000
+    event_bus_claim_idle_ms: int = 180_000
+    event_bus_dispatch_batch: int = 500
+    event_bus_dispatch_interval_ms: int = 250
 
     worker_concurrency: int = 4
     job_lease_seconds: int = 120
@@ -78,18 +88,18 @@ class Config:
     ingest_max_file_bytes: int = 1_000_000
     ingest_allow_symlinks: bool = False
     # Descoberta global segura: janelas fechadas da Search API, sempre head-first.
-    # O enfileiramento automatico de scan e opt-in e nao autoriza validacao ativa.
-    discovery_poll_seconds: int = 60
+    # Enfileiramento automatico nao autoriza validacao ativa de credenciais.
+    discovery_poll_seconds: int = 15
     discovery_lease_seconds: int = 180
     discovery_max_pages: int = 10
     discovery_window_seconds: int = 60
-    discovery_head_delay_seconds: int = 3_600
+    discovery_head_delay_seconds: int = 120
     discovery_reconcile_seconds: int = 900
     discovery_windows_per_poll: int = 4
     discovery_search_requests_per_minute: int = 24
     discovery_metadata_requests_per_hour: int = 3_000
     discovery_repositories_per_poll: int = 8
-    discovery_auto_queue_scans: bool = False
+    discovery_auto_queue_scans: bool = True
     discovery_include_forks: bool = False
     discovery_languages: tuple[str, ...] = ()
     discovery_min_size_kb: int = 1
@@ -97,9 +107,9 @@ class Config:
     discovery_head_scan_max_files: int = 2_000
     discovery_head_scan_max_total_bytes: int = 20_000_000
     discovery_head_scan_timeout_seconds: int = 120
-    discovery_head_scan_sample_percent: int = 5
-    discovery_head_trigger_categories: tuple[str, ...] = ("crypto",)
-    discovery_max_event_age_hours: int = 48
+    discovery_head_scan_sample_percent: int = 100
+    discovery_live_max_age_minutes: int = 20
+    discovery_max_event_age_hours: int = 4
     discovery_retention_days: int = 30
     allow_public_contact_issue: bool = False
     authorized_validation_repos: tuple[str, ...] = ()
@@ -145,6 +155,11 @@ class Config:
             ("SH_EVIDENCE_REDIS_PASSWORD_FILE",),
             "",
         )
+        cfg.evidence_encryption_key = _read_secret(
+            ("SH_EVIDENCE_ENCRYPTION_KEY",),
+            ("SH_EVIDENCE_ENCRYPTION_KEY_FILE",),
+            "",
+        )
 
         for key, env in {
             "validate": "SH_VALIDATE",
@@ -169,6 +184,12 @@ class Config:
             "evidence_redis_port": "SH_EVIDENCE_REDIS_PORT",
             "evidence_redis_db": "SH_EVIDENCE_REDIS_DB",
             "evidence_stream_key": "SH_EVIDENCE_STREAM_KEY",
+            "event_bus_enabled": "SH_EVENT_BUS_ENABLED",
+            "event_bus_prefix": "SH_EVENT_BUS_PREFIX",
+            "event_bus_block_ms": "SH_EVENT_BUS_BLOCK_MS",
+            "event_bus_claim_idle_ms": "SH_EVENT_BUS_CLAIM_IDLE_MS",
+            "event_bus_dispatch_batch": "SH_EVENT_BUS_DISPATCH_BATCH",
+            "event_bus_dispatch_interval_ms": "SH_EVENT_BUS_DISPATCH_INTERVAL_MS",
             "worker_concurrency": "SH_WORKER_CONCURRENCY",
             "job_lease_seconds": "SH_JOB_LEASE_SECONDS",
             "worker_poll_seconds": "SH_WORKER_POLL_SECONDS",
@@ -201,6 +222,7 @@ class Config:
             "discovery_head_scan_max_total_bytes": "SH_DISCOVERY_HEAD_SCAN_MAX_TOTAL_BYTES",
             "discovery_head_scan_timeout_seconds": "SH_DISCOVERY_HEAD_SCAN_TIMEOUT_SECONDS",
             "discovery_head_scan_sample_percent": "SH_DISCOVERY_HEAD_SCAN_SAMPLE_PERCENT",
+            "discovery_live_max_age_minutes": "SH_DISCOVERY_LIVE_MAX_AGE_MINUTES",
             "discovery_max_event_age_hours": "SH_DISCOVERY_MAX_EVENT_AGE_HOURS",
             "discovery_retention_days": "SH_DISCOVERY_RETENTION_DAYS",
             "allow_public_contact_issue": "SH_ALLOW_PUBLIC_CONTACT_ISSUE",
@@ -215,7 +237,7 @@ class Config:
                     "validate", "validate_crypto", "scan_history",
                     "allow_public_contact_issue", "allow_global_search",
                     "ingest_allow_symlinks", "discovery_auto_queue_scans",
-                    "discovery_include_forks", "evidence_enabled",
+                    "discovery_include_forks", "evidence_enabled", "event_bus_enabled",
                 ):
                     setattr(cfg, key, val.strip().lower() in ("1", "true", "yes", "on"))
                 elif key in ("entropy_min", "worker_poll_seconds"):
@@ -238,7 +260,10 @@ class Config:
                     "discovery_head_scan_max_total_bytes",
                     "discovery_head_scan_timeout_seconds",
                     "discovery_head_scan_sample_percent",
+                    "discovery_live_max_age_minutes",
                     "discovery_max_event_age_hours", "discovery_retention_days",
+                    "event_bus_block_ms", "event_bus_claim_idle_ms",
+                    "event_bus_dispatch_batch", "event_bus_dispatch_interval_ms",
                 ):
                     setattr(cfg, key, int(val))
                 elif key == "ingest_root":
@@ -258,13 +283,6 @@ class Config:
         if search_types is not None:
             cfg.search_types = tuple(
                 item.strip() for item in search_types.split(",") if item.strip()
-            )
-        trigger_categories = os.environ.get("SH_DISCOVERY_HEAD_TRIGGER_CATEGORIES")
-        if trigger_categories is not None:
-            cfg.discovery_head_trigger_categories = tuple(
-                item.strip().lower()
-                for item in trigger_categories.split(",")
-                if item.strip()
             )
 
         return cfg
@@ -293,8 +311,17 @@ class Config:
             raise ValueError("SH_FINGERPRINT_KEY deve ter pelo menos 32 bytes")
         if not self.database_url and not self.database_password:
             raise ValueError("senha do PostgreSQL ausente")
-        if self.evidence_enabled and not self.evidence_redis_password:
-            raise ValueError("senha do Redis de evidências ausente")
+        if (self.evidence_enabled or self.event_bus_enabled) and not self.evidence_redis_password:
+            raise ValueError("senha do Redis ausente")
+        if self.evidence_enabled:
+            if len(self.evidence_encryption_key) != 64:
+                raise ValueError("SH_EVIDENCE_ENCRYPTION_KEY deve ter 64 caracteres hexadecimais")
+            try:
+                bytes.fromhex(self.evidence_encryption_key)
+            except ValueError as exc:
+                raise ValueError("SH_EVIDENCE_ENCRYPTION_KEY deve ser hexadecimal") from exc
+        if self.event_bus_dispatch_interval_ms < 10:
+            raise ValueError("SH_EVENT_BUS_DISPATCH_INTERVAL_MS deve ser >= 10")
 
 
 def _read_secret(env_names: tuple[str, ...], file_env_names: tuple[str, ...], default: str) -> str:
@@ -334,7 +361,7 @@ def _apply(cfg: Config, data: dict) -> None:
     for key in (
         "database_host", "database_name", "database_user", "search_scope",
         "ingest_adapter", "ingest_source", "evidence_redis_host",
-        "evidence_stream_key",
+        "evidence_stream_key", "event_bus_prefix",
     ):
         if key in data:
             setattr(cfg, key, str(data[key]))
@@ -352,7 +379,10 @@ def _apply(cfg: Config, data: dict) -> None:
         "discovery_head_scan_max_files", "discovery_head_scan_max_total_bytes",
         "discovery_head_scan_timeout_seconds",
         "discovery_head_scan_sample_percent",
+        "discovery_live_max_age_minutes",
         "discovery_max_event_age_hours", "discovery_retention_days",
+        "event_bus_block_ms", "event_bus_claim_idle_ms", "event_bus_dispatch_batch",
+        "event_bus_dispatch_interval_ms",
     ):
         if key in data:
             setattr(cfg, key, int(data[key]))
@@ -363,6 +393,7 @@ def _apply(cfg: Config, data: dict) -> None:
     for key in (
         "allow_global_search", "allow_public_contact_issue", "ingest_allow_symlinks",
         "discovery_auto_queue_scans", "discovery_include_forks", "evidence_enabled",
+        "event_bus_enabled",
     ):
         if key in data:
             setattr(cfg, key, bool(data[key]))
@@ -378,12 +409,5 @@ def _apply(cfg: Config, data: dict) -> None:
         if isinstance(values, str):
             values = values.split(",")
         cfg.discovery_languages = tuple(
-            str(item).strip().lower() for item in values if str(item).strip()
-        )
-    if "discovery_head_trigger_categories" in data:
-        values = data["discovery_head_trigger_categories"]
-        if isinstance(values, str):
-            values = values.split(",")
-        cfg.discovery_head_trigger_categories = tuple(
             str(item).strip().lower() for item in values if str(item).strip()
         )

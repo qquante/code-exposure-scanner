@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 
 from secret_hunter.config import Config
+from secret_hunter.event_bus import RedisStreamBus
 from secret_hunter.extract import Finding
 from secret_hunter.postgres import PostgresStore
 from secret_hunter.discovery import (
@@ -16,6 +19,7 @@ from secret_hunter.discovery import (
 )
 from secret_hunter.patterns import PATTERN_SET_ID
 from secret_hunter.pipeline import (
+    dispatch_jobs_once,
     handle_job,
     poll_public_repositories_once,
     schedule_ingest,
@@ -85,7 +89,7 @@ def store() -> PostgresStore:
     with db.pool.connection() as conn:
         conn.execute(
             """
-            TRUNCATE audit_events, discovery_candidates, discovery_checkpoints,
+            TRUNCATE pipeline_events, audit_events, discovery_candidates, discovery_checkpoints,
                      notification_findings, notification_outbox,
                      finding_locations, findings,
                      scan_jobs, scan_runs, repositories, rate_limit_buckets
@@ -98,7 +102,7 @@ def store() -> PostgresStore:
         with db.pool.connection() as conn:
             conn.execute(
                 """
-                TRUNCATE audit_events, discovery_candidates, discovery_checkpoints,
+                TRUNCATE pipeline_events, audit_events, discovery_candidates, discovery_checkpoints,
                          notification_findings, notification_outbox,
                          finding_locations, findings,
                          scan_jobs, scan_runs, repositories, rate_limit_buckets
@@ -142,8 +146,8 @@ def test_concurrent_file_ingest_is_idempotent_and_persists_no_raw_secret(
 ) -> None:
     target = tmp_path / "acme" / "demo" / ".env"
     target.parent.mkdir(parents=True)
-    raw = "sk_live_" + "I" * 24
-    target.write_text(f'STRIPE_KEY="{raw}"\n', encoding="utf-8")
+    raw = "0x" + "1234567890abcdef" * 4
+    target.write_text(f'PRIVATE_KEY="{raw}"\n', encoding="utf-8")
     store.cfg.ingest_root = tmp_path
 
     with ThreadPoolExecutor(max_workers=8) as executor:
@@ -167,6 +171,8 @@ def test_concurrent_file_ingest_is_idempotent_and_persists_no_raw_secret(
     assert detail is not None
     assert detail["locations"][0]["source_kind"] == "ingest"
     assert detail["locations"][0]["path"] == ".env"
+    assert finding["latest_path"] == ".env"
+    assert finding["latest_commit_sha"] == ""
     assert raw not in serialized
 
 
@@ -383,6 +389,8 @@ def test_candidate_auto_queue_is_atomic_without_human_authorization(
         ).fetchone()
     assert queued_job["natural_key"].startswith("candidate-head:")
     assert queued_job["payload"]["mode"] == "head"
+    assert queued_job["payload"]["queue_lane"] == "live"
+    assert queued_job["payload"]["event_created_at"]
     assert queued_job["payload"]["history_natural_key"].startswith(
         "candidate-history:"
     )
@@ -705,3 +713,83 @@ def test_discovery_window_ledger_prioritizes_head_and_tracks_reconciliation(
     assert row["repositories_seen"] == 25
     assert row["request_count"] == 1
     assert row["next_attempt_at"] > row["first_completed_at"]
+
+def test_claim_job_by_id_targets_only_the_redis_message(store: PostgresStore) -> None:
+    assert store.enqueue_job("fetch_blob", "redis-job-1", {"repo": "acme/one"}) is True
+    assert store.enqueue_job("fetch_blob", "redis-job-2", {"repo": "acme/two"}) is True
+    ids = {job["natural_key"]: job["id"] for job in store.list_jobs_after(0)}
+    first = ids["redis-job-1"]
+    second = ids["redis-job-2"]
+
+    claimed = store.claim_job_by_id(second, "redis:blob-worker")
+
+    assert claimed is not None
+    assert claimed["id"] == second
+    assert claimed["attempts"] == 1
+    assert store.get_job_state(first)["status"] == "pending"
+    assert store.get_job_state(second)["status"] == "running"
+    assert store.complete_job(second, "redis:blob-worker") is True
+
+
+def test_pipeline_event_index_is_idempotent(store: PostgresStore) -> None:
+    fields = {
+        "event_key": "job:42:completed",
+        "event_type": "job.completed",
+        "stage": "head",
+        "job_id": "",
+        "kind": "scan_history",
+        "payload": '{"attempts": 1, "repository_ref": "abc123"}',
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    assert store.record_pipeline_event("1-0", fields) is True
+    assert store.record_pipeline_event("2-0", fields) is False
+
+    events = store.list_pipeline_events()
+    assert len(events) == 1
+    assert events[0]["event_key"] == "job:42:completed"
+    assert events[0]["payload"]["attempts"] == 1
+
+
+def test_redis_dispatcher_round_trip_is_bound_to_postgres_job(store: PostgresStore) -> None:
+    cfg = Config.from_env()
+    if not cfg.event_bus_enabled or not cfg.evidence_redis_password:
+        pytest.skip("Redis de integração não configurado")
+
+    prefix = f"secret-hunter-integration:{uuid4().hex}"
+    bus = RedisStreamBus.from_config(
+        replace(cfg, event_bus_prefix=prefix, event_bus_block_ms=10)
+    )
+    try:
+        assert store.enqueue_job(
+            "fetch_blob",
+            "redis-postgres-round-trip",
+            {"repo": "acme/demo", "token": "must-not-leak"},
+        ) is True
+        job_id = store.list_jobs_after(0, limit=1)[0]["id"]
+
+        scanned, published = dispatch_jobs_once(store, bus, batch=10)
+        assert (scanned, published) == (1, 1)
+
+        messages = bus.read_new("blob", "integration-worker")
+        assert len(messages) == 1
+        entry_id, fields = messages[0]
+        assert fields["job_id"] == str(job_id)
+        assert "must-not-leak" not in fields["payload"]
+        assert "[redacted]" in fields["payload"]
+
+        claimed = store.claim_job_by_id(job_id, "redis:integration-worker")
+        assert claimed is not None
+        assert claimed["id"] == job_id
+        assert store.complete_job(job_id, "redis:integration-worker") is True
+        assert bus.ack_job("blob", entry_id) == 1
+
+        dispatched = bus.read_events("integration-indexer", count=10)
+        assert len(dispatched) == 1
+        assert dispatched[0][1]["event_type"] == "job.dispatched"
+        assert dispatched[0][1]["job_id"] == str(job_id)
+        assert bus.ack_event(dispatched[0][0]) == 1
+    finally:
+        for key in bus.client.scan_iter(match=f"{prefix}:*"):
+            bus.client.delete(key)
+        bus.close()

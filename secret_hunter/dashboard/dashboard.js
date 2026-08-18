@@ -10,6 +10,8 @@
     jobs: [],
     runs: [],
     detectors: [],
+    events: [],
+    streams: [],
     filters: {
       candidates: "all",
       findings: "all",
@@ -18,7 +20,9 @@
       detectors: "all",
     },
     refreshing: false,
+    liveRefreshing: false,
     timer: null,
+    liveTimer: null,
     activeView: "overview",
     lastFocused: null,
   };
@@ -108,6 +112,18 @@
     return text.length > max ? `${text.slice(0, max - 1)}…` : text;
   }
 
+  function githubLocationUrl(repository, location = {}) {
+    const parts = String(repository || "").split("/");
+    if (parts.length !== 2 || parts.some((part) => !part)) return "";
+    const repo = parts.map(encodeURIComponent).join("/");
+    const path = String(location.path || "").replaceAll("\\", "/").replace(/^\/+/, "");
+    if (!path) return `https://github.com/${repo}`;
+    const ref = String(location.commit_sha || location.branch || "HEAD");
+    const encodedPath = path.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+    const line = Math.max(0, Number(location.line_start || 0));
+    return `https://github.com/${repo}/blob/${encodeURIComponent(ref)}/${encodedPath}${line ? `#L${line}` : ""}`;
+  }
+
   async function api(path, options = {}) {
     const headers = new Headers(options.headers || {});
     headers.set("Authorization", `Bearer ${state.token}`);
@@ -164,6 +180,7 @@
     state.token = "";
     sessionStorage.removeItem("sh_admin_token");
     clearInterval(state.timer);
+    clearInterval(state.liveTimer);
     closeModal();
     showLogin(message);
   }
@@ -196,7 +213,7 @@
     const button = $("#refresh-button");
     setBusy(button, true, "↻");
     try {
-      const [stats, candidates, findings, notifications, jobs, runs, detectors] = await Promise.all([
+      const [stats, candidates, findings, notifications, jobs, runs, detectors, events, streams] = await Promise.all([
         api("/stats"),
         api("/candidates?limit=500"),
         api("/findings?limit=500"),
@@ -204,8 +221,10 @@
         api("/jobs?limit=500"),
         api("/runs?limit=500"),
         api("/detectors"),
+        api("/events?limit=500"),
+        api("/streams"),
       ]);
-      Object.assign(state, { stats, candidates, findings, notifications, jobs, runs, detectors });
+      Object.assign(state, { stats, candidates, findings, notifications, jobs, runs, detectors, events, streams });
       renderAll();
       $("#last-refresh").textContent = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date());
       if (notify) toast("Dados atualizados", "API e PostgreSQL responderam normalmente.");
@@ -218,10 +237,34 @@
     }
   }
 
+  async function refreshLive() {
+    if (state.liveRefreshing || state.refreshing || !state.token || document.hidden) return;
+    state.liveRefreshing = true;
+    try {
+      const [stats, findings, events, streams] = await Promise.all([
+        api("/stats"),
+        api("/findings?limit=500"),
+        api("/events?limit=500"),
+        api("/streams"),
+      ]);
+      Object.assign(state, { stats, findings, events, streams });
+      renderOverview();
+      renderFindings();
+      renderPipeline();
+      $("#last-refresh").textContent = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date());
+    } catch (_error) {
+      // O refresh completo exibe erros; o pulso de 2 s permanece silencioso.
+    } finally {
+      state.liveRefreshing = false;
+    }
+  }
+
   function startAutoRefresh() {
     clearInterval(state.timer);
+    clearInterval(state.liveTimer);
     if (!$("#auto-refresh").checked || !state.token) return;
     state.timer = window.setInterval(() => refreshAll(false), 30000);
+    state.liveTimer = window.setInterval(refreshLive, 2000);
   }
 
   function updateBadge(selector, value) {
@@ -236,6 +279,7 @@
     renderFindings();
     renderNotifications();
     renderJobs();
+    renderPipeline();
     renderRuns();
     renderDetectors();
   }
@@ -315,15 +359,26 @@
   function renderFindings() {
     const rows = filteredFindings();
     const body = $("#finding-table");
-    body.innerHTML = rows.map((item) => `<tr>
-      <td>${riskPill(item.risk)}</td>
-      <td class="repo-cell"><strong>${esc(item.repository)}</strong><small>${statusPill(item.status)}</small></td>
-      <td><span class="primary-cell">${esc(item.platform)}</span><small class="secondary-cell mono">${esc(item.type_id)}</small></td>
-      <td>${esc(item.environment || "unknown")}</td>
-      <td>${statusPill(item.validation_status || "not_checked")}</td>
-      <td><span class="primary-cell">${Number(item.location_count || 0)}</span><small class="secondary-cell">localização(ões)</small></td>
-      <td><div class="row-actions"><button class="row-action primary" data-action="finding-detail" data-id="${Number(item.id)}">Abrir</button></div></td>
-    </tr>`).join("");
+    body.innerHTML = rows.map((item) => {
+      const githubUrl = githubLocationUrl(item.repository, {
+        path: item.latest_path,
+        branch: item.latest_branch,
+        commit_sha: item.latest_commit_sha,
+        line_start: item.latest_line_start,
+      });
+      return `<tr>
+        <td>${riskPill(item.risk)}</td>
+        <td class="repo-cell"><strong>${esc(item.repository)}</strong><small>${statusPill(item.status)}</small></td>
+        <td><span class="primary-cell">${esc(item.platform)}</span><small class="secondary-cell mono">${esc(item.type_id)}</small></td>
+        <td>${esc(item.environment || "unknown")}</td>
+        <td>${statusPill(item.validation_status || "not_checked")}</td>
+        <td><span class="primary-cell">${Number(item.location_count || 0)}</span><small class="secondary-cell">localização(ões)</small></td>
+        <td><div class="row-actions">
+          ${githubUrl ? `<a class="row-action primary" href="${esc(githubUrl)}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>` : ""}
+          <button class="row-action" data-action="finding-detail" data-id="${Number(item.id)}">Detalhes</button>
+        </div></td>
+      </tr>`;
+    }).join("");
     $("#finding-empty").hidden = rows.length > 0;
     body.parentElement.hidden = rows.length === 0;
   }
@@ -378,6 +433,32 @@
     body.parentElement.hidden = rows.length === 0;
   }
 
+  function renderPipeline() {
+    const streamBody = $("#stream-table");
+    streamBody.innerHTML = state.streams.map((item) => `<tr>
+      <td><span class="primary-cell mono">${esc(item.stage)}</span></td>
+      <td class="mono">${esc(item.stream)}</td>
+      <td>${Number(item.length || 0).toLocaleString("pt-BR")}</td>
+      <td>${Number(item.pending || 0).toLocaleString("pt-BR")}</td>
+      <td>${Number(item.consumers || 0).toLocaleString("pt-BR")}</td>
+      <td>${item.lag === null || item.lag === undefined ? "—" : Number(item.lag).toLocaleString("pt-BR")}</td>
+    </tr>`).join("");
+
+    const eventBody = $("#event-table");
+    eventBody.innerHTML = state.events.map((item) => {
+      const payload = JSON.stringify(item.payload || {});
+      return `<tr>
+        <td><span class="primary-cell mono">${esc(item.event_type)}</span><small class="secondary-cell mono">${esc(item.event_key)}</small></td>
+        <td class="mono">${esc(item.stage || "—")}</td>
+        <td class="mono">${item.job_id ? `#${Number(item.job_id)}` : "—"}</td>
+        <td class="mono">${esc(item.kind || "—")}</td>
+        <td><code title="${esc(payload)}">${esc(truncated(payload, 90))}</code></td>
+        <td><span class="primary-cell">${esc(formatDate(item.occurred_at))}</span><small class="secondary-cell">${esc(relativeDate(item.occurred_at))}</small></td>
+      </tr>`;
+    }).join("");
+    $("#event-empty").hidden = state.events.length > 0;
+    eventBody.parentElement.hidden = state.events.length === 0;
+  }
   function renderRuns() {
     const rows = state.runs;
     const body = $("#run-table");
@@ -535,7 +616,10 @@
   async function findingDetail(id) {
     try {
       const item = await api(`/findings/${id}`);
-      const locations = (item.locations || []).map((location) => `<div class="detail-item full"><span>${esc(location.source_kind)} · linha ${Number(location.line_start || 0)}</span><code>${esc(location.path || "(histórico)")}${location.commit_sha ? ` · commit ${esc(truncated(location.commit_sha, 14))}` : ""}</code></div>`).join("");
+      const locations = (item.locations || []).map((location) => {
+        const githubUrl = githubLocationUrl(item.repository, location);
+        return `<div class="detail-item full"><span>${esc(location.source_kind)} · linha ${Number(location.line_start || 0)}</span><code>${esc(location.path || "(histórico)")}${location.commit_sha ? ` · commit ${esc(truncated(location.commit_sha, 14))}` : ""}</code>${githubUrl ? `<a class="row-action primary" href="${esc(githubUrl)}" target="_blank" rel="noopener noreferrer">Abrir arquivo no GitHub ↗</a>` : ""}</div>`;
+      }).join("");
       openModal({
         title: `${item.platform} em ${item.repository}`,
         kicker: "ACHADO REDIGIDO",

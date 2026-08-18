@@ -16,6 +16,7 @@ from typing import Any
 from .config import Config
 from .extract import Finding
 from .history_scan import normalize_github_repo
+from .queue_policy import HEAD_LANES, classify_head_lane
 from .report import build_issue_body, build_issue_title
 
 try:
@@ -400,7 +401,7 @@ class PostgresStore:
                 raise RuntimeError("lease do coletor perdido")
 
             created = 0
-            for event in reversed(events):
+            for event in events:
                 repository = normalize_github_repo(str(event.get("repository") or ""))
                 if repository is None:
                     continue
@@ -439,6 +440,10 @@ class PostgresStore:
                 if candidate is None:
                     continue
                 candidate_id = int(candidate["id"])
+                queue_lane = classify_head_lane(
+                    event.get("event_created_at"),
+                    live_max_age_minutes=self.cfg.discovery_live_max_age_minutes,
+                )
                 conn.execute(
                     """
                     INSERT INTO scan_jobs
@@ -454,6 +459,7 @@ class PostgresStore:
                             {
                                 "candidate_id": candidate_id,
                                 "repository": repository,
+                                "queue_lane": queue_lane,
                                 "metadata": event.get("metadata"),
                             },
                             ensure_ascii=False,
@@ -613,6 +619,66 @@ class PostgresStore:
                 "jobs": len(jobs),
                 "repositories": len(repositories),
             }
+
+    def list_jobs_after(self, job_id: int, *, limit: int = 500) -> list[dict[str, Any]]:
+        """Lista o log monotônico usado pelo dispatcher Redis."""
+        with self.pool.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, run_id, kind, natural_key, payload, status, priority,
+                       attempts, max_attempts, available_at, lease_owner, leased_until,
+                       last_error, created_at, updated_at, completed_at
+                FROM scan_jobs
+                WHERE id > %s
+                ORDER BY id
+                LIMIT %s
+                """,
+                (max(int(job_id), 0), min(max(int(limit), 1), 5000)),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def claim_job_by_id(self, job_id: int, worker: str) -> dict[str, Any] | None:
+        """Claim idempotente do job apontado por uma mensagem Redis."""
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                """
+                WITH candidate AS (
+                    SELECT id
+                    FROM scan_jobs
+                    WHERE id = %s
+                      AND attempts < max_attempts
+                      AND (
+                        (status = 'pending' AND available_at <= now())
+                        OR (status = 'running' AND leased_until < now())
+                      )
+                    FOR UPDATE SKIP LOCKED
+                )
+                UPDATE scan_jobs AS job
+                SET status = 'running',
+                    attempts = attempts + 1,
+                    lease_owner = %s,
+                    leased_until = now() + (%s * interval '1 second'),
+                    updated_at = now()
+                FROM candidate
+                WHERE job.id = candidate.id
+                RETURNING job.*
+                """,
+                (int(job_id), worker, self.cfg.job_lease_seconds),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_job_state(self, job_id: int) -> dict[str, Any] | None:
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id, kind, status, attempts, max_attempts, available_at,
+                       lease_owner, leased_until, completed_at
+                FROM scan_jobs
+                WHERE id = %s
+                """,
+                (int(job_id),),
+            ).fetchone()
+            return dict(row) if row else None
 
     def claim_job(
         self, worker: str, *, kinds: tuple[str, ...] | None = None
@@ -917,11 +983,21 @@ class PostgresStore:
                 SELECT f.id, r.full_name AS repository, f.type_id, f.platform, f.category,
                        f.environment, f.risk, f.confidence, f.secret_hint,
                        f.validation_status, f.status, f.first_seen, f.last_seen,
-                       count(l.id)::int AS location_count
+                       (SELECT count(*)::int FROM finding_locations counted
+                        WHERE counted.finding_id = f.id) AS location_count,
+                       latest.path AS latest_path,
+                       latest.branch AS latest_branch,
+                       latest.commit_sha AS latest_commit_sha,
+                       latest.line_start AS latest_line_start
                 FROM findings f
                 JOIN repositories r ON r.id = f.repository_id
-                LEFT JOIN finding_locations l ON l.finding_id = f.id
-                GROUP BY f.id, r.full_name
+                LEFT JOIN LATERAL (
+                    SELECT path, branch, commit_sha, line_start
+                    FROM finding_locations
+                    WHERE finding_id = f.id
+                    ORDER BY last_seen DESC, id DESC
+                    LIMIT 1
+                ) latest ON true
                 ORDER BY {_RISK_SQL} DESC, f.last_seen DESC, f.id DESC
                 LIMIT %s OFFSET %s
                 """,
@@ -1113,6 +1189,7 @@ class PostgresStore:
         *,
         trufflehog: bool,
         pattern_set_id: str,
+        queue_lane: str | None = None,
     ) -> dict[str, Any] | None:
         """Enfileira candidato elegível sem registrar autorização humana."""
         return self._queue_candidate_scan(
@@ -1121,6 +1198,7 @@ class PostgresStore:
             authorization_reference=None,
             trufflehog=trufflehog,
             pattern_set_id=pattern_set_id,
+            queue_lane=queue_lane,
         )
 
     def _queue_candidate_scan(
@@ -1131,6 +1209,7 @@ class PostgresStore:
         authorization_reference: str | None,
         trufflehog: bool,
         pattern_set_id: str,
+        queue_lane: str | None = None,
     ) -> dict[str, Any] | None:
         """Cria run/job uma única vez e avança o candidato atomicamente."""
         with self.pool.connection() as conn:
@@ -1159,6 +1238,14 @@ class PostgresStore:
                 f"candidate-history:{pattern_set_id}:{candidate['github_event_id']}"
             )
             head_first = authorization_reference is None
+            effective_queue_lane: str | None = None
+            if head_first:
+                if queue_lane is not None and queue_lane not in HEAD_LANES:
+                    raise ValueError(f"lane HEAD desconhecida: {queue_lane}")
+                effective_queue_lane = queue_lane or classify_head_lane(
+                    candidate["event_created_at"],
+                    live_max_age_minutes=self.cfg.discovery_live_max_age_minutes,
+                )
             natural_key = (
                 f"candidate-head:{pattern_set_id}:{candidate['github_event_id']}"
                 if head_first
@@ -1169,9 +1256,11 @@ class PostgresStore:
                 "trufflehog": bool(trufflehog),
                 "candidate_id": candidate_id,
                 "mode": "head" if head_first else "history",
+                "event_created_at": candidate["event_created_at"].isoformat(),
             }
             if head_first:
                 scan_payload["history_natural_key"] = history_natural_key
+                scan_payload["queue_lane"] = effective_queue_lane
             job = conn.execute(
                 """
                 INSERT INTO scan_jobs
@@ -1214,7 +1303,11 @@ class PostgresStore:
                     (job_id, candidate_id),
                 )
                 audit_action = "candidate.scan_auto_queued"
-                audit_metadata = {"trigger": "eligible_metadata", "stage": "head"}
+                audit_metadata = {
+                    "trigger": "eligible_metadata",
+                    "stage": f"head-{effective_queue_lane}",
+                    "queue_lane": effective_queue_lane,
+                }
             else:
                 conn.execute(
                     """
@@ -1329,6 +1422,54 @@ class PostgresStore:
                 LIMIT %s
                 """,
                 (min(max(limit, 1), 500),),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def record_pipeline_event(
+        self, redis_entry_id: str, fields: dict[str, Any]
+    ) -> bool:
+        """Indexa um evento Redis sanitizado de forma idempotente."""
+        raw_payload = fields.get("payload") or {}
+        if isinstance(raw_payload, str):
+            raw_payload = json.loads(raw_payload)
+        payload = dict(raw_payload) if isinstance(raw_payload, dict) else {}
+        raw_job_id = str(fields.get("job_id") or "").strip()
+        job_id = int(raw_job_id) if raw_job_id.isdigit() else None
+        occurred_at = str(fields.get("occurred_at") or datetime.now(timezone.utc).isoformat())
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO pipeline_events
+                    (redis_entry_id, event_key, event_type, stage, job_id, kind,
+                     payload, occurred_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::timestamptz)
+                ON CONFLICT (event_key) DO NOTHING
+                RETURNING id
+                """,
+                (
+                    redis_entry_id,
+                    str(fields.get("event_key") or redis_entry_id),
+                    str(fields.get("event_type") or "unknown"),
+                    str(fields.get("stage") or "unknown"),
+                    job_id,
+                    str(fields.get("kind") or ""),
+                    json.dumps(payload, ensure_ascii=False),
+                    occurred_at,
+                ),
+            ).fetchone()
+            return row is not None
+
+    def list_pipeline_events(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self.pool.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, redis_entry_id, event_key, event_type, stage, job_id,
+                       kind, payload, occurred_at, indexed_at
+                FROM pipeline_events
+                ORDER BY occurred_at DESC, id DESC
+                LIMIT %s
+                """,
+                (min(max(int(limit), 1), 500),),
             ).fetchall()
             return [dict(row) for row in rows]
 

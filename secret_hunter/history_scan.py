@@ -20,6 +20,7 @@ from pathlib import Path
 from . import patterns as P
 from .config import Config
 from .extract import Finding, extract_from_text
+from .scan_policy import TRUFFLEHOG_EXCLUDE_GLOBS, is_dependency_path
 
 
 # --------------------------------------------------------------------------- #
@@ -70,6 +71,9 @@ class NativeGitScanner:
         current_file_text: list[str] = []  # linhas ADICIONADAS do diff acumuladas
 
         def flush() -> None:
+            if is_dependency_path(current_path):
+                current_file_text.clear()
+                return
             if current_file_text and current_commit:
                 text = "\n".join(current_file_text)
                 for f in extract_from_text(
@@ -124,7 +128,7 @@ def trufflehog_scan(repo_url: str, cfg: Config) -> list[Finding]:
         r = subprocess.run(
             [
                 "trufflehog", "git", f"https://github.com/{repo}.git", "--json", "--no-update",
-                "--no-verification",
+                "--no-verification", "--exclude-globs", ",".join(TRUFFLEHOG_EXCLUDE_GLOBS),
             ],
             capture_output=True, text=True, timeout=600,
         )
@@ -143,7 +147,11 @@ def trufflehog_scan(repo_url: str, cfg: Config) -> list[Finding]:
         except json.JSONDecodeError:
             continue
         finding = _trufflehog_to_finding(item)
-        if finding.secret_raw and normalize_github_repo(finding.repo):
+        if (
+            finding.secret_raw
+            and normalize_github_repo(finding.repo)
+            and not is_dependency_path(finding.path)
+        ):
             findings.append(finding)
     return findings
 

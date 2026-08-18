@@ -3,15 +3,15 @@
 ## Perfis seguros
 
 - Sem perfil: PostgreSQL, migração e API. Nenhuma busca/envio.
-- `scanner`: worker e scheduler. Requer token GitHub e escopo.
+- `scanner`: dispatcher, indexador, scheduler e workers `search`/`blob`. Requer token GitHub read-only.
 - `notifications`: worker de divulgação. Só consome drafts aprovados.
-- `test`: suíte contra um PostgreSQL temporário próprio (`postgres-test`), sem
-  tocar no volume operacional.
+- `test`: suíte contra PostgreSQL e Redis temporários próprios (`postgres-test` e `redis-test`), sem
+  tocar nos volumes operacionais.
 - `ingest`: watcher e workers exclusivos para arquivos do drop-zone; não inicia
   busca GitHub nem notificações.
 - `discovery`: consulta janelas fechadas de repositórios recém-criados, reutiliza
-  metadados da Search API e filtra candidatos. No automático, amostra 5% para pré-scan
-  raso e limitado; a Code Search cripto complementa a cobertura e apenas sinal `crypto` expande para histórico completo.
+  metadados da Search API e filtra candidatos. No automático, envia 100% dos elegíveis para pré-scan
+  raso e limitado; a Code Search complementa a cobertura e somente um detector da allowlist EVM/Solana/BIP39 expande para histórico completo.
   Validação ativa continua separada.
 
 ## Dashboard local
@@ -20,6 +20,9 @@ O dashboard é servido pela própria API em `http://127.0.0.1:8000/`. Ele não
 adiciona porta nem serviço Docker. O token administrativo é solicitado no login
 e permanece somente no `sessionStorage` da aba. Headers CSP, `frame-ancestors`,
 `nosniff`, `no-referrer` e `no-store` reduzem a superfície do frontend.
+A tabela de achados atualiza a cada 2 segundos enquanto a aba está visível e oferece
+um link direto para o arquivo/commit/linha no GitHub. A atualização completa permanece
+em 30 segundos para não recarregar todas as coleções continuamente.
 
 Para copiar o token no PowerShell sem imprimi-lo em documentação ou `.env`:
 
@@ -29,7 +32,7 @@ Get-Content .\.secrets\admin_api_token.txt -Raw | Set-Clipboard
 
 ## Concorrência
 
-Jobs são reclamados com `FOR UPDATE SKIP LOCKED` e lease. O heartbeat renova jobs longos; se um worker morrer, outro retoma após expiração. Enqueue, finding e localização são idempotentes. O rate limiter é compartilhado no banco e reserva cada página de Code Search.
+PostgreSQL mantém o estado durável e idempotente de cada job. O `redis-dispatcher` publica referências sanitizadas em um stream por estágio. Workers usam consumer groups, reclamam mensagens abandonadas e só executam o job exato após `claim_job_by_id`; o `XACK` ocorre depois do commit terminal. Leases e heartbeat permitem retomada após crash. Enqueue, finding e localização são idempotentes. O rate limiter é compartilhado no banco.
 
 O watcher usa lease PostgreSQL e um ledger de janelas de 60 segundos. As janelas
 mais recentes são consultadas primeiro, divididas quando ultrapassam 1.000
@@ -42,8 +45,12 @@ Repository Search usa um bucket compartilhado de 24 requests/minuto.
 É seguro escalar horizontalmente:
 
 ```powershell
-docker compose --profile scanner up -d --scale worker=8 worker
+docker compose --profile scanner --profile discovery up -d
 ```
+
+O Compose reserva 4 workers para `metadata-live`, 8 para `head-live`, 2/4 para
+backfill e 4 para histórico. Dois workers legados de metadata e HEAD drenam jobs
+anteriores sem reset. O rate limiter PostgreSQL continua único entre réplicas.
 
 Aumentar workers não aumenta a cota do GitHub. O default é oito páginas de Code Search por minuto; o ambiente ativo usa cinco, abaixo do limite autenticado de dez.
 
@@ -70,6 +77,7 @@ No Compose local, “secrets” ainda são arquivos plaintext no host. O script 
   workers.
 - Senha PostgreSQL: exige alterar o usuário no banco e o secret de forma coordenada.
 - Chave `fingerprint_key`: não rotacione diretamente; isso quebraria deduplicação. Planeje migração com período de duas chaves.
+- Chave `evidence_encryption_key`: preserve backup separado; rotação exige manter a chave antiga para ler o corpus já cifrado.
 
 O script `init-secrets.ps1` preserva secrets existentes. `-RotateCoreSecrets` é para uma instalação vazia ou rotação planejada.
 
@@ -86,8 +94,9 @@ O script `init-secrets.ps1` preserva secrets existentes. `-RotateCoreSecrets` é
 
 ```powershell
 docker compose ps
-docker compose logs --tail 200 api worker scheduler notification-worker
+docker compose logs --tail 200 api redis-dispatcher event-indexer `
+  metadata-worker head-worker history-worker search-worker blob-worker
 docker compose exec postgres pg_isready -U secret_hunter -d secret_hunter
 ```
 
-Use `GET /runs`, `/jobs` e `/stats` para diferenciar fila vazia, retry, lease expirado e falha definitiva.
+Use `GET /runs`, `/jobs`, `/streams`, `/events` e `/stats` para diferenciar fila vazia, lag de transporte, retry, lease expirado e falha definitiva. O dashboard exibe as mesmas métricas sem expor payload bruto.

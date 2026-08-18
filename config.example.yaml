@@ -21,11 +21,19 @@ worker_concurrency: 4
 job_lease_seconds: 180
 worker_poll_seconds: 2
 search_window_hours: 1
-search_types: []
+search_types: [evm_private_key_to_account, evm_ethers_wallet, evm_account_from_key, evm_private_key_env, solana_from_secret_key, solana_from_seed, bip39_mnemonic_to_account]
 search_requests_per_minute: 8
 search_scope: "repo:owner/repo"
 allow_global_search: false
 allow_public_contact_issue: false
+
+# Redis Streams usa a mesma instância protegida da evidência bruta.
+event_bus_enabled: true
+event_bus_prefix: secret-hunter
+event_bus_block_ms: 5000
+event_bus_claim_idle_ms: 180000
+event_bus_dispatch_batch: 500
+event_bus_dispatch_interval_ms: 250
 
 # Drop-zone de arquivos ja obtidos por um conector externo autorizado.
 ingest_root: /ingest
@@ -35,19 +43,19 @@ ingest_poll_seconds: 60
 ingest_max_file_bytes: 1000000
 ingest_allow_symlinks: false
 
-# GitHub Repository Search: head primeiro; 48h e apenas o teto de recuperacao.
-discovery_poll_seconds: 60
+# GitHub Repository Search: live primeiro; 4h e apenas o teto de recuperacao.
+discovery_poll_seconds: 15
 discovery_lease_seconds: 180
 discovery_max_pages: 10
 discovery_window_seconds: 60
-discovery_head_delay_seconds: 3600
+discovery_head_delay_seconds: 120
 discovery_reconcile_seconds: 900
 discovery_windows_per_poll: 4
 discovery_search_requests_per_minute: 24
 discovery_metadata_requests_per_hour: 3000
 # Usado somente pelo cursor legado /repositories.
 discovery_repositories_per_poll: 1000
-discovery_auto_queue_scans: false
+discovery_auto_queue_scans: true
 discovery_include_forks: false
 discovery_languages: []
 discovery_min_size_kb: 1
@@ -55,7 +63,7 @@ discovery_max_size_kb: 50000
 discovery_head_scan_max_files: 2000
 discovery_head_scan_max_total_bytes: 20000000
 discovery_head_scan_timeout_seconds: 120
-discovery_head_scan_sample_percent: 5
-discovery_head_trigger_categories: [crypto]
-discovery_max_event_age_hours: 48
+discovery_head_scan_sample_percent: 100
+discovery_live_max_age_minutes: 20
+discovery_max_event_age_hours: 4
 discovery_retention_days: 30

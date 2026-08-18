@@ -152,6 +152,23 @@ CREATE TABLE IF NOT EXISTS audit_events (
     CHECK (jsonb_typeof(metadata) = 'object')
 );
 
+CREATE TABLE IF NOT EXISTS pipeline_events (
+    id BIGSERIAL PRIMARY KEY,
+    redis_entry_id TEXT NOT NULL,
+    event_key TEXT NOT NULL UNIQUE,
+    event_type TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    job_id BIGINT REFERENCES scan_jobs(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL DEFAULT '',
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    occurred_at TIMESTAMPTZ NOT NULL,
+    indexed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (jsonb_typeof(payload) = 'object')
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_events_recent
+    ON pipeline_events (occurred_at DESC, id DESC);
+
 CREATE TABLE IF NOT EXISTS discovery_checkpoints (
     collector_key TEXT PRIMARY KEY,
     etag TEXT NOT NULL DEFAULT '',

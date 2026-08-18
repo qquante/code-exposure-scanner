@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from datetime import datetime, timezone
@@ -54,9 +55,14 @@ def _sanitize_url(url: str) -> str:
 class RedisEvidenceStore:
     """Append-only lógico: um item por resposta HTTP, sem TTL nem trimming."""
 
-    def __init__(self, client: Any, stream_key: str):
+    def __init__(self, client: Any, stream_key: str, encryption_key: bytes):
+        key = bytes(encryption_key)
+        if len(key) != 32:
+            raise ValueError("a chave de evidência deve ter exatamente 32 bytes")
         self.client = client
         self.stream_key = stream_key
+        self._encryption_key = key
+        self.encryption_key_id = hashlib.sha256(key).hexdigest()[:16]
 
     @classmethod
     def from_config(cls, cfg: Config) -> "RedisEvidenceStore":
@@ -77,7 +83,15 @@ class RedisEvidenceStore:
             decode_responses=False,
         )
         client.ping()
-        return cls(client, cfg.evidence_stream_key)
+        try:
+            encryption_key = bytes.fromhex(cfg.evidence_encryption_key)
+        except ValueError as exc:
+            client.close()
+            raise ValueError("chave de criptografia da evidência inválida") from exc
+        if len(encryption_key) != 32:
+            client.close()
+            raise ValueError("chave de criptografia da evidência deve ter 32 bytes")
+        return cls(client, cfg.evidence_stream_key, encryption_key)
 
     def append_bytes(
         self,
@@ -86,21 +100,39 @@ class RedisEvidenceStore:
         *,
         metadata: Mapping[str, Any] | None = None,
     ) -> str:
+        try:
+            from Crypto.Cipher import AES
+            from Crypto.Random import get_random_bytes
+        except ImportError as exc:  # pragma: no cover - falha de empacotamento
+            raise RuntimeError("dependência pycryptodome não instalada") from exc
+
         raw = bytes(payload)
         captured_at = datetime.now(timezone.utc).isoformat()
+        metadata_json = json.dumps(
+            _sanitize(dict(metadata or {})),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        metadata_bytes = metadata_json.encode("utf-8")
+        nonce = get_random_bytes(12)
+        cipher = AES.new(self._encryption_key, AES.MODE_GCM, nonce=nonce, mac_len=16)
+        cipher.update(metadata_bytes)
+        ciphertext, auth_tag = cipher.encrypt_and_digest(raw)
         fields = {
-            "schema_version": "1",
+            "schema_version": "2",
             "source": source,
             "captured_at": captured_at,
-            "payload": raw,
+            "encryption": "AES-256-GCM",
+            "encryption_key_id": self.encryption_key_id,
+            "nonce": base64.b64encode(nonce).decode("ascii"),
+            "auth_tag": base64.b64encode(auth_tag).decode("ascii"),
+            "payload": ciphertext,
             "payload_sha256": hashlib.sha256(raw).hexdigest(),
+            "payload_ciphertext_sha256": hashlib.sha256(ciphertext).hexdigest(),
             "payload_size": str(len(raw)),
-            "metadata": json.dumps(
-                _sanitize(dict(metadata or {})),
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ),
+            "metadata": metadata_json,
+            "metadata_sha256": hashlib.sha256(metadata_bytes).hexdigest(),
         }
         entry_id = self.client.xadd(self.stream_key, fields)
         return entry_id.decode("ascii") if isinstance(entry_id, bytes) else str(entry_id)

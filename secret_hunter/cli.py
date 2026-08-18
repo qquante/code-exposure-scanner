@@ -23,6 +23,7 @@ from pathlib import Path
 
 from . import __version__
 from .config import Config
+from .queue_policy import STAGES
 from .extract import Finding, dedupe, extract_from_text
 from .github_search import SEARCH_QUERIES, GitHubClient
 from .history_scan import NativeGitScanner, trufflehog_available, trufflehog_scan
@@ -241,6 +242,40 @@ def cmd_worker(cfg: Config, args) -> int:
     return 0
 
 
+def cmd_redis_dispatcher(cfg: Config, args) -> int:
+    from .pipeline import run_redis_dispatcher
+
+    run_redis_dispatcher(cfg, once=args.once)
+    return 0
+
+
+def cmd_redis_worker(cfg: Config, args) -> int:
+    from .pipeline import run_redis_stage_worker
+
+    run_redis_stage_worker(cfg, stage=args.stage, once=args.once)
+    return 0
+
+
+def cmd_event_indexer(cfg: Config, args) -> int:
+    from .pipeline import run_event_indexer
+
+    run_event_indexer(cfg, once=args.once)
+    return 0
+
+
+def cmd_stream_stats(cfg: Config, _args) -> int:
+    import json
+
+    from .event_bus import RedisStreamBus
+
+    bus = RedisStreamBus.from_config(cfg)
+    try:
+        print(json.dumps(bus.stream_stats(), ensure_ascii=False, indent=2))
+    finally:
+        bus.close()
+    return 0
+
+
 def cmd_notification_worker(cfg: Config, args) -> int:
     from .pipeline import run_notification_worker
 
@@ -402,6 +437,26 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--kinds", help="tipos de job permitidos, separados por virgula")
     w.add_argument("--once", action="store_true", help="drena a fila atual e encerra")
     w.set_defaults(func=cmd_worker)
+
+    rd = sub.add_parser("redis-dispatcher", help="publica jobs PostgreSQL em Redis Streams")
+    rd.add_argument("--once", action="store_true")
+    rd.set_defaults(func=cmd_redis_dispatcher)
+
+    rw = sub.add_parser("redis-worker", help="consome um estágio independente do Redis")
+    rw.add_argument(
+        "--stage",
+        required=True,
+        choices=STAGES,
+    )
+    rw.add_argument("--once", action="store_true")
+    rw.set_defaults(func=cmd_redis_worker)
+
+    ei = sub.add_parser("event-indexer", help="indexa eventos Redis sanitizados no PostgreSQL")
+    ei.add_argument("--once", action="store_true")
+    ei.set_defaults(func=cmd_event_indexer)
+
+    rs = sub.add_parser("stream-stats", help="mostra lag e pendências dos Redis Streams")
+    rs.set_defaults(func=cmd_stream_stats)
 
     nw = sub.add_parser("notification-worker", help="envia apenas drafts aprovados")
     nw.add_argument("--once", action="store_true")

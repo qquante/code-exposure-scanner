@@ -1,6 +1,6 @@
 # Tokens e configuracao do ambiente
 
-O deploy usa dois tokens GitHub independentes e tres segredos internos. Nenhum
+O deploy usa dois tokens GitHub independentes e cinco segredos internos. Nenhum
 token de Stripe, AWS, Mercado Pago, banco, EVM, Solana ou outro provedor e
 necessario para operar o scanner.
 
@@ -57,8 +57,10 @@ ambiente autorizado, o texto publico nao inclui segredo, caminho ou commit.
 - `fingerprint_key.txt`: chave HMAC usada para deduplicar sem persistir o segredo
   bruto. Nao rotacione em banco existente sem migracao.
 - `admin_api_token.txt`: bearer token da API administrativa local.
+- `redis_evidence_password.txt`: senha da instância Redis usada por Streams e evidência bruta.
+- `evidence_encryption_key.txt`: chave AES-256 usada somente pelos clientes que cifram a evidência antes do Redis.
 
-O script gera esses tres valores com RNG criptografico e restringe a ACL ao
+O script gera esses cinco valores com RNG criptografico e restringe a ACL ao
 usuario atual e `SYSTEM` no Windows.
 
 ## 4. Criar os arquivos sem expor tokens no shell
@@ -97,8 +99,11 @@ DISCOVERY_RECONCILE_SECONDS=900
 DISCOVERY_WINDOWS_PER_POLL=4
 DISCOVERY_SEARCH_REQUESTS_PER_MINUTE=24
 DISCOVERY_MAX_EVENT_AGE_HOURS=48
-DISCOVERY_AUTO_QUEUE_SCANS=false
-DISCOVERY_HEAD_SCAN_SAMPLE_PERCENT=5
+DISCOVERY_AUTO_QUEUE_SCANS=true
+DISCOVERY_HEAD_SCAN_SAMPLE_PERCENT=100
+EVENT_BUS_ENABLED=true
+EVENT_BUS_PREFIX=secret-hunter
+EVENT_BUS_DISPATCH_INTERVAL_MS=250
 VALIDATE_SECRETS=false
 VALIDATE_CRYPTO=false
 AUTHORIZED_VALIDATION_REPOS=
@@ -115,11 +120,11 @@ Os campos `*_FILE` do `.env` sao apenas caminhos. Os valores secretos ficam em
 docker compose up -d --build api
 
 # Busca no escopo do .env
-docker compose --profile scanner up -d --scale worker=2 worker scheduler
+docker compose --profile scanner up -d --build --scale search-worker=2
 
 # Repositorios publicos recem-criados; scan segue DISCOVERY_AUTO_QUEUE_SCANS
-docker compose --profile discovery up -d --scale discovery-worker=2 `
-  discovery-watcher discovery-worker
+docker compose --profile scanner --profile discovery up -d --build `
+  --scale metadata-worker=2 --scale head-worker=2
 
 # Somente depois de revisar e aprovar os drafts na API
 docker compose --profile notifications up -d notification-worker
@@ -127,6 +132,9 @@ docker compose --profile notifications up -d notification-worker
 
 Validacao ativa de um segredo encontrado nao usa um token adicional do
 provedor: usa o proprio candidato apenas em memoria, somente em repositorios
-explicitamente allowlisted. Mantenha `VALIDATE_SECRETS=false` fora de uma
+explicitamente allowlisted. Mantenha `EVENT_BUS_ENABLED=true
+EVENT_BUS_PREFIX=secret-hunter
+EVENT_BUS_DISPATCH_INTERVAL_MS=250
+VALIDATE_SECRETS=false` fora de uma
 autorizacao formal. A validacao cripto e local, sem RPC, saldo, assinatura ou
 broadcast.
