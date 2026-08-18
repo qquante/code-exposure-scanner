@@ -24,7 +24,7 @@ GitHub Repository Search (API limitada)       Code Search (API limitada)
        |                         |                   |
        +-------------------------+-------------------+
                                  |
-                    sinal cripto EVM/Solana/BIP39
+                    todo repositório elegível
                                  |
                            history (4)
                                  |
@@ -35,9 +35,10 @@ GitHub Repository Search (API limitada)       Code Search (API limitada)
 
 ## Contrato e idempotência
 
-O dispatcher lê o log monotônico de `scan_jobs` e publica somente o ID do job,
-tipo, chave natural, prioridade e payload sanitizado. O ID PostgreSQL vira o ID
-explícito da mensagem Redis, impedindo uma segunda publicação do mesmo job.
+O dispatcher procura jobs ativos ainda sem confirmação de publicação, inclusive
+IDs abaixo do cursor legado. Depois do `XADD`, grava a confirmação e o ID gerado
+pelo Redis no job PostgreSQL. Mensagens repetidas continuam seguras porque o claim
+do job no PostgreSQL é idempotente.
 
 Cada estágio possui stream e consumer group próprios. Um worker lê com
 `XREADGROUP`, reclama mensagens abandonadas com `XAUTOCLAIM` e confirma com
@@ -61,7 +62,7 @@ banco. Redis não decide se um job está concluído.
 | `<prefix>:jobs:head-live` | `<prefix>:workers:head-live` | pré-scan raso prioritário do HEAD |
 | `<prefix>:jobs:head-backfill` | `<prefix>:workers:head-backfill` | pré-scan raso de recuperação |
 | `<prefix>:jobs:head` | `<prefix>:workers:head` | compatibilidade: drena jobs anteriores às lanes |
-| `<prefix>:jobs:history` | `<prefix>:workers:history` | histórico após sinal cripto |
+| `<prefix>:jobs:history` | `<prefix>:workers:history` | histórico de todo candidato elegível quando `SCAN_HISTORY=true` |
 | `<prefix>:jobs:ingest` | `<prefix>:workers:ingest` | drop-zone local |
 | `<prefix>:events` | `<prefix>:indexer` | eventos operacionais sanitizados |
 | `<prefix>:dead-letter` | operador | mensagens inválidas ou sem rota |
@@ -77,10 +78,12 @@ indique token, cookie, senha, seed, mnemonic, secret ou private key são
 substituídos por `[redacted]`. Findings publicam somente fingerprint HMAC, hint,
 tipo, risco e localização. O valor detectado nunca entra no barramento.
 
-O stream de evidência é deliberadamente diferente: preserva o corpo HTTP para a
-pesquisa em formato bruto. A instância não publica porta no host, exige uma senha
-única e persiste com AOF. Quem obtiver a senha e alcançar o Redis poderá ler o
-payload; por isso ela não deve ser compartilhada nem usada no dashboard.
+O stream de evidência é deliberadamente diferente: preserva corpos HTTP, arquivos
+do HEAD que produziram achado e registros aceitos do TruffleHog em formato bruto,
+cada um com SHA-256. Arquivos limpos não são copiados, evitando transformar o Redis
+em espelho indiscriminado do GitHub. A instância não publica porta no host, exige
+uma senha única e persiste com AOF. Quem obtiver a senha e alcançar o Redis poderá
+ler o payload; por isso ela não deve ser compartilhada nem usada no dashboard.
 
 ## Subir e observar
 

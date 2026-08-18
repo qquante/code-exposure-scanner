@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import Config
+from .evidence import maybe_evidence_store
 from .extract import Finding, extract_from_text
 from .scan_policy import is_dependency_path
 from .history_scan import normalize_github_repo
@@ -117,6 +118,7 @@ class HeadGitScanner:
         files_scanned = 0
         bytes_scanned = 0
         truncated = len(candidates) > max_files
+        evidence = maybe_evidence_store(self.cfg)
 
         for relative, path in candidates:
             if files_scanned >= max_files:
@@ -140,15 +142,30 @@ class HeadGitScanner:
             if b"\0" in raw[:8192]:
                 continue
             text = raw.decode("utf-8", errors="replace")
-            findings.extend(
-                extract_from_text(
-                    text,
-                    repo=repo,
-                    path=relative,
-                    commit=commit,
-                    source="head",
-                )
+            file_findings = extract_from_text(
+                text,
+                repo=repo,
+                path=relative,
+                commit=commit,
+                source="head",
             )
+            findings.extend(file_findings)
+            if file_findings and evidence is not None:
+                evidence.append_bytes(
+                    "github.head.file",
+                    raw,
+                    metadata={
+                        "repository": repo,
+                        "path": relative,
+                        "commit": commit,
+                        "finding_types": sorted(
+                            {item.type_id for item in file_findings}
+                        ),
+                    },
+                )
+
+        if evidence is not None:
+            evidence.close()
 
         return HeadScanResult(
             findings=tuple(findings),

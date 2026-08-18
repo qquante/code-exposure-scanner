@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS scan_jobs (
     lease_owner TEXT,
     leased_until TIMESTAMPTZ,
     last_error TEXT NOT NULL DEFAULT '',
+    redis_dispatched_at TIMESTAMPTZ,
+    redis_entry_id TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at TIMESTAMPTZ,
@@ -252,6 +254,11 @@ ALTER TABLE scan_jobs ADD CONSTRAINT scan_jobs_kind_check
         'github_search', 'fetch_blob', 'scan_history', 'scan_ingested_file',
         'enrich_repository_candidate'
     ));
+
+ALTER TABLE scan_jobs
+    ADD COLUMN IF NOT EXISTS redis_dispatched_at TIMESTAMPTZ;
+ALTER TABLE scan_jobs
+    ADD COLUMN IF NOT EXISTS redis_entry_id TEXT NOT NULL DEFAULT '';
 
 ALTER TABLE finding_locations
     DROP CONSTRAINT IF EXISTS finding_locations_source_kind_check;

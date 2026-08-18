@@ -17,6 +17,7 @@ from .disclosure import GitHubDisclosureClient
 from .event_bus import RedisStreamBus, STAGES, stage_for_job
 from .discovery import (
     PUBLIC_REPOSITORIES_KEY,
+    PUSHED_REPOSITORIES_KEY,
     GitHubPublicEventsClient,
     evaluate_repository_metadata,
     RepositoryMetadata,
@@ -348,7 +349,7 @@ def _handle_history(
     if mode == "head":
         result = HeadGitScanner(cfg).scan_repo(url)
         findings = filter_crypto_wallet_findings(result.findings)
-        expand_history = bool(findings)
+        expand_history = cfg.scan_history
         repository_ref = hashlib.sha256(repo.encode("utf-8")).hexdigest()[:12]
         print(
             f"head-scan repository_ref={repository_ref} files={result.files_scanned} "
@@ -377,7 +378,11 @@ def _handle_history(
                     "trufflehog": bool(payload.get("trufflehog", True)),
                     "candidate_id": payload.get("candidate_id"),
                     "mode": "history",
-                    "trigger": "head_crypto_signal",
+                    "trigger": (
+                        "head_crypto_signal"
+                        if findings
+                        else "automatic_eligible"
+                    ),
                 },
                 run_id=job.get("run_id"),
                 priority=5,
@@ -605,30 +610,41 @@ def dispatch_jobs_once(
     *,
     batch: int = 500,
 ) -> tuple[int, int]:
-    """Move o log monotônico de jobs PostgreSQL para streams Redis por estágio."""
-    cursor = bus.dispatcher_cursor()
-    jobs = store.list_jobs_after(cursor, limit=batch)
-    published = 0
+    """Publica jobs ativos ainda não confirmados, inclusive abaixo do cursor legado."""
+    jobs = store.list_undispatched_jobs(limit=batch)
+    publications: list[tuple[dict[str, Any], str, bool]] = []
     for job in jobs:
+        entry_id, created = bus.publish_job(job)
+        publications.append((job, entry_id, created))
+
+    marked = store.mark_jobs_dispatched(
+        [(int(job["id"]), entry_id) for job, entry_id, _created in publications]
+    )
+    published = 0
+    cursor = bus.dispatcher_cursor()
+    highest_job_id = cursor
+    for job, entry_id, created in publications:
         job_id = int(job["id"])
-        if str(job.get("status") or "") in {"pending", "running"}:
-            entry_id, created = bus.publish_job(job)
-            stage = stage_for_job(job)
-            bus.publish_event(
-                "job.dispatched",
-                event_key=f"job:{job_id}:dispatched",
-                stage=stage,
-                job_id=job_id,
-                kind=str(job.get("kind") or ""),
-                payload={
-                    "redis_entry_id": entry_id,
-                    "created": created,
-                    "priority": int(job.get("priority") or 0),
-                    "status": str(job.get("status") or "pending"),
-                },
-            )
-            published += int(created)
-        bus.advance_dispatcher_cursor(job_id)
+        if job_id not in marked:
+            continue
+        stage = stage_for_job(job)
+        bus.publish_event(
+            "job.dispatched",
+            event_key=f"job:{job_id}:dispatched",
+            stage=stage,
+            job_id=job_id,
+            kind=str(job.get("kind") or ""),
+            payload={
+                "redis_entry_id": entry_id,
+                "created": created,
+                "priority": int(job.get("priority") or 0),
+                "status": str(job.get("status") or "pending"),
+            },
+        )
+        published += int(created)
+        highest_job_id = max(highest_job_id, job_id)
+    if highest_job_id > cursor:
+        bus.advance_dispatcher_cursor(highest_job_id)
     return len(jobs), published
 
 
@@ -911,11 +927,13 @@ def poll_public_repositories_once(
     *,
     client: GitHubPublicEventsClient | None = None,
     owner: str | None = None,
+    collector_key: str = PUBLIC_REPOSITORIES_KEY,
+    pushed_recheck: bool = False,
 ) -> dict[str, Any]:
     """Processa o head primeiro e usa o horizonte configurado só para recuperação."""
-    lease_owner = owner or f"{cfg.worker_name}:{os.getpid()}:discovery"
+    lease_owner = owner or f"{cfg.worker_name}:{os.getpid()}:discovery:{collector_key}"
     checkpoint = store.claim_discovery_checkpoint(
-        PUBLIC_REPOSITORIES_KEY,
+        collector_key,
         lease_owner,
         lease_seconds=cfg.discovery_lease_seconds,
     )
@@ -959,7 +977,7 @@ def poll_public_repositories_once(
     owns_client = client is None
     try:
         windows = store.prepare_discovery_windows(
-            PUBLIC_REPOSITORIES_KEY,
+            collector_key,
             lease_owner,
             cutoff=cutoff,
             head_end=head_end,
@@ -969,16 +987,24 @@ def poll_public_repositories_once(
         by_id: dict[int, Any] = {}
         window_results: list[dict[str, Any]] = []
         source_items_seen = 0
+        created_after = now - timedelta(hours=max(cfg.discovery_max_event_age_hours, 1))
         search_requests = 0
         failed_windows = 0
         highest_repository_id = 0
 
         for window in windows:
             try:
-                poll = api.search_repository_window(
-                    window_start=window["window_start"],
-                    window_end=window["window_end"],
-                )
+                if pushed_recheck:
+                    poll = api.search_pushed_repository_window(
+                        window_start=window["window_start"],
+                        window_end=window["window_end"],
+                        created_after=created_after,
+                    )
+                else:
+                    poll = api.search_repository_window(
+                        window_start=window["window_start"],
+                        window_end=window["window_end"],
+                    )
             except Exception as exc:
                 failed_windows += 1
                 window_results.append(
@@ -1013,16 +1039,19 @@ def poll_public_repositories_once(
             ),
             reverse=True,
         )
-        known_ids = store.existing_discovery_repository_ids(
-            [item.github_repository_id for item in searched]
-        )
-        candidates = [
-            item
-            for item in searched
-            if item.github_repository_id not in known_ids
-        ]
+        if pushed_recheck:
+            candidates = searched
+        else:
+            known_ids = store.existing_discovery_repository_ids(
+                [item.github_repository_id for item in searched]
+            )
+            candidates = [
+                item
+                for item in searched
+                if item.github_repository_id not in known_ids
+            ]
         created = store.persist_discovery_poll(
-            PUBLIC_REPOSITORIES_KEY,
+            collector_key,
             lease_owner,
             [candidate.payload() for candidate in candidates],
             etag="",
@@ -1035,12 +1064,14 @@ def poll_public_repositories_once(
             gap_detected=failed_windows > 0,
             window_results=window_results,
             reconcile_seconds=cfg.discovery_reconcile_seconds,
+            reactivate_size_filtered=pushed_recheck,
         )
         pruned = store.prune_discovery(
             retention_days=cfg.discovery_retention_days
         )
         return {
             "claimed": True,
+            "collector_key": collector_key,
             "events_seen": source_items_seen,
             "source_items_seen": source_items_seen,
             "repository_events": len(candidates),
@@ -1060,7 +1091,7 @@ def poll_public_repositories_once(
         }
     except Exception as exc:
         store.fail_discovery_checkpoint(
-            PUBLIC_REPOSITORIES_KEY,
+            collector_key,
             lease_owner,
             f"{type(exc).__name__}: {exc}",
             retry_seconds=cfg.discovery_poll_seconds,
@@ -1071,29 +1102,56 @@ def poll_public_repositories_once(
             api.close()
 
 
+def poll_recently_pushed_repositories_once(
+    store: PostgresStore,
+    cfg: Config,
+    *,
+    client: GitHubPublicEventsClient | None = None,
+    owner: str | None = None,
+) -> dict[str, Any]:
+    """Reabre candidatos recentes antes vazios quando o primeiro push chega."""
+    return poll_public_repositories_once(
+        store,
+        cfg,
+        client=client,
+        owner=owner,
+        collector_key=PUSHED_REPOSITORIES_KEY,
+        pushed_recheck=True,
+    )
+
+
 def run_discovery_watcher(cfg: Config, *, once: bool = False) -> None:
     """Prioriza a janela recente e enfileira automaticamente candidatos elegíveis."""
     store = PostgresStore(cfg)
     try:
         while True:
-            try:
-                result = poll_public_repositories_once(store, cfg)
-                if result.get("claimed"):
+            errors: list[Exception] = []
+            collectors = (
+                ("created", poll_public_repositories_once),
+                ("pushed", poll_recently_pushed_repositories_once),
+            )
+            for label, poller in collectors:
+                try:
+                    result = poller(store, cfg)
+                    if result.get("claimed"):
+                        print(
+                            f"discovery-{label}: "
+                            f"vistos={result['source_items_seen']} "
+                            f"repos={result.get('repository_events', 0)} "
+                            f"novos={result['candidates_created']} "
+                            f"janelas={result.get('windows_processed', 0)} "
+                            f"falhas={result.get('windows_failed', 0)} "
+                            f"requests={result.get('search_requests', 0)} "
+                            f"head={result.get('head_at', '')}"
+                        )
+                except Exception as exc:
+                    errors.append(exc)
                     print(
-                        "discovery: "
-                        f"vistos={result['source_items_seen']} "
-                        f"repos={result.get('repository_events', 0)} "
-                        f"novos={result['candidates_created']} "
-                        f"janelas={result.get('windows_processed', 0)} "
-                        f"falhas={result.get('windows_failed', 0)} "
-                        f"requests={result.get('search_requests', 0)} "
-                        f"head={result.get('head_at', '')}"
+                        f"[discovery-{label}-error] {type(exc).__name__}: {exc}"
                     )
-            except Exception as exc:
-                if once:
-                    raise
-                print(f"[discovery-error] {type(exc).__name__}: {exc}")
             if once:
+                if errors:
+                    raise errors[0]
                 return
             time.sleep(min(max(cfg.discovery_poll_seconds, 5), 60))
     finally:

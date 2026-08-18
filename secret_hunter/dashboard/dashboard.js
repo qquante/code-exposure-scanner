@@ -288,11 +288,16 @@
     const stats = state.stats;
     const candidateReviews = Number(stats.pending_candidate_reviews || 0);
     const activeJobs = Number(stats.pending_jobs || 0) + Number(stats.running_jobs || 0);
+    const staleJobs = Number(stats.stale_pending_jobs || 0);
     $("#metric-candidates").textContent = candidateReviews.toLocaleString("pt-BR");
     $("#metric-findings").textContent = Number(stats.open_findings || 0).toLocaleString("pt-BR");
     $("#metric-jobs").textContent = activeJobs.toLocaleString("pt-BR");
     $("#metric-notifications").textContent = Number(stats.pending_reviews || 0).toLocaleString("pt-BR");
-    $("#system-state-detail").textContent = activeJobs ? `${activeJobs} job(s) ativo(s)` : "API e banco respondendo";
+    $("#system-state-detail").textContent = staleJobs
+      ? `${activeJobs} job(s) no banco · ${staleJobs} atrasado(s)`
+      : activeJobs
+        ? `${activeJobs} job(s) ativo(s)`
+        : "API e banco respondendo";
     updateBadge("#nav-candidate-count", candidateReviews);
     updateBadge("#nav-finding-count", stats.open_findings);
     updateBadge("#nav-notification-count", stats.pending_reviews);

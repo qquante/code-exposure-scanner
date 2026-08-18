@@ -22,6 +22,7 @@ from .history_scan import normalize_github_repo
 
 
 PUBLIC_REPOSITORIES_KEY = "github-public-repositories"
+PUSHED_REPOSITORIES_KEY = "github-public-repositories-pushed"
 BASE = "https://api.github.com"
 PUBLIC_EVENTS_KEY = "github-public-events"
 
@@ -37,6 +38,7 @@ class RepositoryCreatedEvent:
     repository: str
     event_created_at: str
     metadata: dict[str, Any] | None = None
+    recheck_token: str = ""
 
     def payload(self) -> dict[str, Any]:
         result = {
@@ -47,6 +49,8 @@ class RepositoryCreatedEvent:
         }
         if self.metadata is not None:
             result["metadata"] = self.metadata
+        if self.recheck_token:
+            result["recheck_token"] = self.recheck_token
         return result
 
 
@@ -88,6 +92,7 @@ class RepositoryMetadata:
     is_disabled: bool
     default_branch: str
     created_at: str | None
+    pushed_at: str | None = None
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -101,6 +106,7 @@ class RepositoryMetadata:
             "is_disabled": self.is_disabled,
             "default_branch": self.default_branch,
             "created_at": self.created_at,
+            "pushed_at": self.pushed_at,
         }
 
 
@@ -190,6 +196,7 @@ def repository_metadata_from_api(data: dict[str, Any]) -> RepositoryMetadata:
         is_disabled=bool(data.get("disabled")),
         default_branch=str(data.get("default_branch") or ""),
         created_at=str(data.get("created_at")) if data.get("created_at") else None,
+        pushed_at=str(data.get("pushed_at")) if data.get("pushed_at") else None,
     )
 
 
@@ -632,6 +639,173 @@ class GitHubPublicEventsClient:
             by_id.values(),
             key=lambda item: (
                 _parse_timestamp(item.event_created_at)
+                or datetime.min.replace(tzinfo=timezone.utc),
+                item.github_repository_id,
+            ),
+            reverse=True,
+        )
+        return PublicRepositoriesPoll(
+            repositories=tuple(repositories),
+            newest_repository_id=str(highest_repository_id),
+            poll_interval=max(self.cfg.discovery_poll_seconds, 5),
+            source_items_seen=source_items_seen,
+            bootstrapped=False,
+            request_count=request_count,
+            window_start=start.isoformat(),
+            window_end=end.isoformat(),
+        )
+
+    def search_pushed_repository_window(
+        self,
+        *,
+        window_start: datetime,
+        window_end: datetime,
+        created_after: datetime,
+    ) -> PublicRepositoriesPoll:
+        """Revisita repos recentes quando recebem push, sem polling por repositório."""
+        start = window_start.astimezone(timezone.utc).replace(microsecond=0)
+        end = window_end.astimezone(timezone.utc).replace(microsecond=0)
+        created_cutoff = created_after.astimezone(timezone.utc).replace(microsecond=0)
+        if end <= start:
+            raise GitHubDiscoveryError("janela de push inválida")
+
+        by_id: dict[int, RepositoryCreatedEvent] = {}
+        source_items_seen = 0
+        request_count = 0
+        highest_repository_id = 0
+        min_size = max(self.cfg.discovery_min_size_kb, 0)
+
+        def collect(left: datetime, right: datetime) -> None:
+            nonlocal source_items_seen, request_count, highest_repository_id
+            query = (
+                f"pushed:{left.strftime('%Y-%m-%dT%H:%M:%SZ')}.."
+                f"{right.strftime('%Y-%m-%dT%H:%M:%SZ')} "
+                f"created:>={created_cutoff.strftime('%Y-%m-%dT%H:%M:%SZ')} "
+                f"size:>={min_size} is:public"
+            )
+            if self.cfg.discovery_include_forks:
+                query += " fork:true"
+            response = self._request(
+                f"{BASE}/search/repositories",
+                retries=max(self.cfg.http_retries, 2),
+                params={
+                    "q": query,
+                    "sort": "updated",
+                    "order": "desc",
+                    "per_page": 100,
+                    "page": 1,
+                },
+            )
+            request_count += 1
+            if response.status_code != 200:
+                raise GitHubDiscoveryError(
+                    f"pushed repository search {response.status_code}: "
+                    f"{response.text[:300]}"
+                )
+            payload = response.json()
+            if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+                raise GitHubDiscoveryError(
+                    "pushed repository search retornou payload inválido"
+                )
+            if bool(payload.get("incomplete_results")):
+                raise GitHubDiscoveryError(
+                    "pushed repository search retornou resultados incompletos"
+                )
+            try:
+                total_count = max(int(payload.get("total_count") or 0), 0)
+            except (TypeError, ValueError) as exc:
+                raise GitHubDiscoveryError(
+                    "pushed repository search sem total_count válido"
+                ) from exc
+
+            if total_count > 1_000:
+                span_seconds = int((right - left).total_seconds())
+                if span_seconds <= 1:
+                    raise GitHubDiscoveryError(
+                        "mais de 1.000 pushes no mesmo segundo; janela não pode ser dividida"
+                    )
+                midpoint = left + timedelta(seconds=max(span_seconds // 2, 1))
+                collect(midpoint, right)
+                collect(left, midpoint)
+                return
+
+            page_payloads = [payload]
+            for page in range(2, max(1, math.ceil(total_count / 100)) + 1):
+                page_response = self._request(
+                    f"{BASE}/search/repositories",
+                    retries=max(self.cfg.http_retries, 2),
+                    params={
+                        "q": query,
+                        "sort": "updated",
+                        "order": "desc",
+                        "per_page": 100,
+                        "page": page,
+                    },
+                )
+                request_count += 1
+                if page_response.status_code != 200:
+                    raise GitHubDiscoveryError(
+                        f"pushed repository page {page} {page_response.status_code}: "
+                        f"{page_response.text[:300]}"
+                    )
+                page_payload = page_response.json()
+                if (
+                    not isinstance(page_payload, dict)
+                    or not isinstance(page_payload.get("items"), list)
+                    or bool(page_payload.get("incomplete_results"))
+                ):
+                    raise GitHubDiscoveryError(
+                        f"pushed repository page {page} retornou resultados incompletos"
+                    )
+                page_payloads.append(page_payload)
+
+            for page_payload in page_payloads:
+                items = page_payload["items"]
+                source_items_seen += len(items)
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        metadata = repository_metadata_from_api(item)
+                    except GitHubDiscoveryError:
+                        continue
+                    created_at = _parse_timestamp(metadata.created_at)
+                    pushed_at = _parse_timestamp(metadata.pushed_at)
+                    if (
+                        created_at is None
+                        or pushed_at is None
+                        or created_at < created_cutoff
+                        or pushed_at < left
+                        or pushed_at > right
+                        or metadata.size_kb < min_size
+                        or not metadata.is_public
+                        or (
+                            metadata.is_fork
+                            and not self.cfg.discovery_include_forks
+                        )
+                    ):
+                        continue
+                    highest_repository_id = max(
+                        highest_repository_id, metadata.github_repository_id
+                    )
+                    token = (
+                        f"{metadata.github_repository_id}:{metadata.pushed_at}:"
+                        f"{metadata.size_kb}:{metadata.default_branch}"
+                    )
+                    by_id[metadata.github_repository_id] = RepositoryCreatedEvent(
+                        event_id=f"repository-pushed:{metadata.github_repository_id}",
+                        github_repository_id=metadata.github_repository_id,
+                        repository=metadata.full_name,
+                        event_created_at=created_at.isoformat(),
+                        metadata=metadata.payload(),
+                        recheck_token=token,
+                    )
+
+        collect(start, end)
+        repositories = sorted(
+            by_id.values(),
+            key=lambda item: (
+                _parse_timestamp((item.metadata or {}).get("pushed_at"))
                 or datetime.min.replace(tzinfo=timezone.utc),
                 item.github_repository_id,
             ),

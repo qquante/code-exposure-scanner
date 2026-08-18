@@ -386,6 +386,7 @@ class PostgresStore:
         gap_detected: bool,
         window_results: list[dict[str, Any]] | None = None,
         reconcile_seconds: int = 900,
+        reactivate_size_filtered: bool = False,
     ) -> int:
         """Persiste candidatos, jobs e checkpoint na mesma transação."""
         with self.pool.connection() as conn:
@@ -437,9 +438,45 @@ class PostgresStore:
                         str(event["event_created_at"]),
                     ),
                 ).fetchone()
+                reactivated = False
+                if candidate is None and reactivate_size_filtered:
+                    metadata = event.get("metadata")
+                    size_kb = 0
+                    if isinstance(metadata, dict):
+                        try:
+                            size_kb = max(int(metadata.get("size_kb") or 0), 0)
+                        except (TypeError, ValueError):
+                            size_kb = 0
+                    if size_kb >= max(self.cfg.discovery_min_size_kb, 0):
+                        candidate = conn.execute(
+                            """
+                            UPDATE discovery_candidates
+                            SET status = 'pending_metadata',
+                                filter_reason = '',
+                                updated_at = now()
+                            WHERE github_repository_id = %s
+                              AND status = 'filtered'
+                              AND filter_reason = 'size_below_min'
+                            RETURNING id
+                            """,
+                            (int(event["github_repository_id"]),),
+                        ).fetchone()
+                        reactivated = candidate is not None
                 if candidate is None:
                     continue
                 candidate_id = int(candidate["id"])
+                if reactivated:
+                    raw_token = str(event.get("recheck_token") or "")
+                    if not raw_token:
+                        raw_token = json.dumps(
+                            event.get("metadata") or {},
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        )
+                    token = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()[:20]
+                    natural_key = f"discovery-recheck:{event['event_id']}:{token}"
+                else:
+                    natural_key = f"discovery-enrich:{event['event_id']}"
                 queue_lane = classify_head_lane(
                     event.get("event_created_at"),
                     live_max_age_minutes=self.cfg.discovery_live_max_age_minutes,
@@ -454,7 +491,7 @@ class PostgresStore:
                     ON CONFLICT (natural_key) DO NOTHING
                     """,
                     (
-                        f"discovery-enrich:{event['event_id']}",
+                        natural_key,
                         json.dumps(
                             {
                                 "candidate_id": candidate_id,
@@ -636,6 +673,54 @@ class PostgresStore:
                 (max(int(job_id), 0), min(max(int(limit), 1), 5000)),
             ).fetchall()
             return [dict(row) for row in rows]
+
+    def list_undispatched_jobs(self, *, limit: int = 500) -> list[dict[str, Any]]:
+        """Lista jobs ativos que ainda não possuem confirmação de publicação Redis."""
+        with self.pool.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, run_id, kind, natural_key, payload, status, priority,
+                       attempts, max_attempts, available_at, lease_owner, leased_until,
+                       last_error, redis_dispatched_at, redis_entry_id,
+                       created_at, updated_at, completed_at
+                FROM scan_jobs
+                WHERE status IN ('pending', 'running')
+                  AND redis_dispatched_at IS NULL
+                ORDER BY priority DESC, id
+                LIMIT %s
+                """,
+                (min(max(int(limit), 1), 5000),),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def mark_jobs_dispatched(self, entries: list[tuple[int, str]]) -> set[int]:
+        """Confirma um lote depois do XADD; duplicatas continuam idempotentes no claim."""
+        if not entries:
+            return set()
+        job_ids = [int(job_id) for job_id, _entry_id in entries]
+        entry_ids = [str(entry_id) for _job_id, entry_id in entries]
+        with self.pool.connection() as conn:
+            rows = conn.execute(
+                """
+                WITH dispatched(job_id, entry_id) AS (
+                    SELECT * FROM unnest(%s::bigint[], %s::text[])
+                )
+                UPDATE scan_jobs AS jobs
+                SET redis_dispatched_at = now(),
+                    redis_entry_id = dispatched.entry_id,
+                    updated_at = now()
+                FROM dispatched
+                WHERE jobs.id = dispatched.job_id
+                  AND jobs.status IN ('pending', 'running')
+                RETURNING jobs.id
+                """,
+                (job_ids, entry_ids),
+            ).fetchall()
+            return {int(row["id"]) for row in rows}
+
+    def mark_job_dispatched(self, job_id: int, entry_id: str) -> bool:
+        """Compatibilidade para confirmação unitária."""
+        return int(job_id) in self.mark_jobs_dispatched([(job_id, entry_id)])
 
     def claim_job_by_id(self, job_id: int, worker: str) -> dict[str, Any] | None:
         """Claim idempotente do job apontado por uma mensagem Redis."""
@@ -1493,8 +1578,17 @@ class PostgresStore:
                 """
                 SELECT
                     (SELECT count(*) FROM findings WHERE status = 'open')::int AS open_findings,
-                    (SELECT count(*) FROM scan_jobs WHERE status = 'pending')::int AS pending_jobs,
+                    (SELECT count(*) FROM scan_jobs
+                     WHERE status = 'pending')::int AS pending_jobs,
                     (SELECT count(*) FROM scan_jobs WHERE status = 'running')::int AS running_jobs,
+                    (SELECT count(*) FROM scan_jobs
+                     WHERE status = 'pending'
+                       AND updated_at >= now() - interval '5 minutes')::int
+                        AS live_pending_jobs,
+                    (SELECT count(*) FROM scan_jobs
+                     WHERE status = 'pending'
+                       AND updated_at < now() - interval '5 minutes')::int
+                        AS stale_pending_jobs,
                     (SELECT count(*) FROM notification_outbox WHERE status = 'pending_review')::int
                         AS pending_reviews,
                     (SELECT count(*) FROM discovery_candidates WHERE status = 'pending_metadata')::int

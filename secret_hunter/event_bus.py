@@ -128,11 +128,10 @@ class RedisStreamBus:
                 raise
 
     def publish_job(self, job: dict[str, Any]) -> tuple[str, bool]:
-        """Publish a job once using its monotonic PostgreSQL ID as stream ID."""
+        """Publica com ID Redis próprio; job_id PostgreSQL mantém a idempotência."""
         job_id = int(job["id"])
         stage = stage_for_job(job)
         stream = self.job_stream(stage)
-        entry_id = f"{job_id}-0"
         fields = {
             "schema_version": "1",
             "event_type": "job.available",
@@ -148,18 +147,8 @@ class RedisStreamBus:
                 sanitize_event_payload(job_payload(job)), ensure_ascii=False, sort_keys=True
             ),
         }
-        try:
-            result = self.client.xadd(stream, fields, id=entry_id)
-            return str(result), True
-        except Exception as exc:
-            if "equal or smaller" not in str(exc).lower():
-                raise
-            existing = self.client.xrange(stream, min=entry_id, max=entry_id, count=1)
-            if existing and str(existing[0][1].get("job_id")) == str(job_id):
-                return entry_id, False
-            raise RuntimeError(
-                f"stream {stream} avançou sem conter job {job_id}"
-            ) from exc
+        result = self.client.xadd(stream, fields)
+        return str(result), True
 
     def publish_event(
         self,

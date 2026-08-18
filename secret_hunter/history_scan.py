@@ -19,6 +19,7 @@ from pathlib import Path
 
 from . import patterns as P
 from .config import Config
+from .evidence import maybe_evidence_store
 from .extract import Finding, extract_from_text
 from .scan_policy import TRUFFLEHOG_EXCLUDE_GLOBS, is_dependency_path
 
@@ -137,6 +138,7 @@ def trufflehog_scan(repo_url: str, cfg: Config) -> list[Finding]:
     except subprocess.TimeoutExpired:
         print("    [warn] trufflehog atingiu timeout")
         return findings
+    evidence = maybe_evidence_store(cfg)
 
     for raw in r.stdout.splitlines():
         raw = raw.strip()
@@ -153,6 +155,20 @@ def trufflehog_scan(repo_url: str, cfg: Config) -> list[Finding]:
             and not is_dependency_path(finding.path)
         ):
             findings.append(finding)
+            if evidence is not None:
+                evidence.append_bytes(
+                    "github.history.trufflehog",
+                    raw.encode("utf-8"),
+                    metadata={
+                        "repository": finding.repo,
+                        "path": finding.path,
+                        "commit": finding.commit,
+                        "finding_type": finding.type_id,
+                    },
+                )
+    if evidence is not None:
+        evidence.close()
+
     return findings
 
 

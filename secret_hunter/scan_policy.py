@@ -49,9 +49,23 @@ DEPENDENCY_METADATA_FILES = frozenset(
 )
 
 
+KNOWN_CRYPTO_TEST_VECTOR_SUFFIXES = (
+    "fixtures/randomized_v1.json",
+    "fixtures/sealed_box_v1.json",
+    "testdata/sealed-box-p256.json",
+)
+
+
 TRUFFLEHOG_EXCLUDE_GLOBS = (
     *(f"**/{segment}/**" for segment in sorted(DEPENDENCY_PATH_SEGMENTS)),
     "**/Cargo.lock",
+    "**/fixtures/randomized_v1.json",
+    "**/fixtures/sealed_box_v1.json",
+    "**/testdata/sealed-box-p256.json",
+    "**/forge-std/test/StdCheats.t.sol",
+    "**/btcec/**/*_test.go",
+    "**/btcutil/**/*_test.go",
+    "**/waddrmgr/**/*_test.go",
 )
 
 
@@ -62,6 +76,22 @@ def is_dependency_path(path: str) -> bool:
         return False
     parts = tuple(segment.casefold() for segment in normalized.split("/"))
     if parts[-1] in DEPENDENCY_METADATA_FILES:
+        return True
+    folded = "/".join(parts)
+    if any(folded.endswith(suffix) for suffix in KNOWN_CRYPTO_TEST_VECTOR_SUFFIXES):
+        return True
+    if "/forge-std/test/stdcheats.t.sol" in f"/{folded}":
+        return True
+    basename = parts[-1]
+    if basename.endswith("_test.go") and any(
+        component in {"btcec", "btcutil", "waddrmgr"}
+        for component in parts[:-1]
+    ):
+        return True
+    if basename == "bench_test.go" and any(
+        component in {"btcec", "btcutil", "waddrmgr"}
+        for component in parts[:-1]
+    ):
         return True
     return any(
         segment in DEPENDENCY_PATH_SEGMENTS or segment.endswith(".egg-info")

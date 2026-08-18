@@ -11,16 +11,17 @@ Pipeline defensivo para localizar segredos em código público do GitHub e prepa
 - Fetch por SHA de blob imutável para evitar corrida entre busca e alteração do arquivo.
 - Histórico completo por Git nativo e TruffleHog 3.96.0 com verificação externa desabilitada.
 - PostgreSQL com jobs idempotentes, leases, heartbeat, `FOR UPDATE SKIP LOCKED`, retry com backoff e limitador de Code Search compartilhado entre containers.
-- Redis Streams autenticado e persistente para filas por estágio, eventos sanitizados e respostas REST brutas com SHA-256, sem porta publicada, TTL ou trimming automático.
+- Redis Streams autenticado e persistente para filas por estágio, eventos sanitizados e evidência bruta positiva/HTTP com SHA-256, sem porta publicada, TTL ou trimming automático.
 - Um draft ativo por repositório, agregando achados sem duplicar alertas.
 - O pipeline cripto interno é automático; divulgação externa continua sob aprovação humana. O notification worker prefere Private Vulnerability Reporting e nunca abre Issue pública por padrão.
 - API administrativa autenticada que lista catálogo, achados, localizações, runs, jobs e drafts. Nenhuma resposta contém segredo bruto.
 - Drop-zone modular read-only com adapters `tree` e `manifest`, SHA-256 contra
   corrida de arquivo e workers exclusivos de ingestão.
 
-- Descoberta global head-first via Repository Search: janelas fechadas de 60s,
-  divisão adaptativa sob o teto de 1.000, reconciliação, deduplicação, lease e
-  fila auditada; 4h é somente o limite de recuperação.
+- Descoberta global via Repository Search: janelas `created:` e `pushed:` fechadas
+  de 60s, divisão adaptativa sob o teto de 1.000, reconciliação e fila auditada.
+  Repos inicialmente vazios são revisitados; 4h é somente o limite de recuperação.
+  Todo candidato elegível segue por HEAD e histórico quando `SCAN_HISTORY=true`.
 
 O SQLite permanece apenas como modo local/legado de processo único. Não o use com vários workers.
 

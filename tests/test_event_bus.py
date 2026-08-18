@@ -115,7 +115,7 @@ def test_event_payload_redacts_sensitive_fields_recursively() -> None:
     }
 
 
-def test_publish_job_is_idempotent_and_contains_sanitized_data() -> None:
+def test_publish_job_uses_redis_id_and_contains_sanitized_data() -> None:
     client = _FakeRedis()
     bus = RedisStreamBus(client, prefix="test")
     job = _job(
@@ -129,8 +129,7 @@ def test_publish_job_is_idempotent_and_contains_sanitized_data() -> None:
         },
     )
 
-    assert bus.publish_job(job) == ("42-0", True)
-    assert bus.publish_job(job) == ("42-0", False)
+    assert bus.publish_job(job)[1] is True
 
     entries = client.streams["test:jobs:head-live"]
     assert len(entries) == 1

@@ -515,6 +515,77 @@ def test_repository_window_splits_over_github_result_cap_newest_first() -> None:
     assert start.strftime("%Y-%m-%dT%H:%M:%SZ") in session.calls[2]["params"]["q"]
 
 
+def test_pushed_repository_window_revisits_only_recent_nonempty_repositories() -> None:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    created_after = now - timedelta(hours=4)
+    pushed_at = now - timedelta(seconds=30)
+    session = _Session(
+        [
+            _Response(
+                200,
+                {
+                    "total_count": 3,
+                    "incomplete_results": False,
+                    "items": [
+                        {
+                            **_repository_item(
+                                701,
+                                "acme/filled-after-create",
+                                created_at=(now - timedelta(hours=2)).isoformat(),
+                            ),
+                            "pushed_at": pushed_at.isoformat(),
+                            "size": 12,
+                            "default_branch": "main",
+                        },
+                        {
+                            **_repository_item(
+                                702,
+                                "acme/stale-push",
+                                created_at=(now - timedelta(hours=1)).isoformat(),
+                            ),
+                            "pushed_at": (now - timedelta(minutes=2)).isoformat(),
+                            "size": 8,
+                        },
+                        {
+                            **_repository_item(
+                                703,
+                                "acme/old-repository",
+                                created_at=(now - timedelta(hours=8)).isoformat(),
+                            ),
+                            "pushed_at": pushed_at.isoformat(),
+                            "size": 9,
+                        },
+                    ],
+                },
+            )
+        ]
+    )
+    client = GitHubPublicEventsClient(
+        Config(discovery_min_size_kb=1),
+        session=session,  # type: ignore[arg-type]
+    )
+
+    result = client.search_pushed_repository_window(
+        window_start=now - timedelta(minutes=1),
+        window_end=now,
+        created_after=created_after,
+    )
+
+    assert [item.repository for item in result.repositories] == [
+        "acme/filled-after-create"
+    ]
+    event = result.repositories[0]
+    assert event.event_id == "repository-pushed:701"
+    assert event.recheck_token
+    assert event.metadata is not None
+    assert event.metadata["pushed_at"] == pushed_at.isoformat()
+    query = session.calls[0]["params"]["q"]
+    assert "pushed:" in query
+    assert f"created:>={created_after.strftime('%Y-%m-%dT%H:%M:%SZ')}" in query
+    assert "size:>=1" in query
+    assert "is:public" in query
+
+
 def test_embedded_search_metadata_skips_redundant_repository_request(
     monkeypatch,
 ) -> None:

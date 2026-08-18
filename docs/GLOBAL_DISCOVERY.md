@@ -1,15 +1,16 @@
-# Descoberta global segura de repositórios novos
+# Descoberta global segura de repositórios novos e recém-preenchidos
 
-O objetivo é acompanhar repositórios públicos recém-criados. As 4 horas são
-somente o teto de recuperação: o scheduler sempre processa primeiro a janela
-fechada mais recente e nunca busca itens antigos para preencher artificialmente
-um lote.
+O objetivo é acompanhar repositórios públicos recém-criados e revisitá-los quando
+recebem push no mesmo horizonte. Isso cobre o repo que nasce vazio e recebe arquivos
+minutos depois. As 4 horas são somente o teto de recuperação: o scheduler processa
+primeiro a janela fechada mais recente e não busca itens antigos para preencher
+artificialmente um lote.
 
 Com `DISCOVERY_AUTO_QUEUE_SCANS=true` e `DISCOVERY_HEAD_SCAN_SAMPLE_PERCENT=100`, todos os
 candidatos elegíveis seguem para pré-scan raso. Em paralelo, a Code Search consulta
-somente sete contextos EVM/Solana/BIP-39 de alto sinal. O histórico completo só é
-criado após um achado da allowlist fixa EVM/Solana/BIP39. Nessa fase, Bitcoin WIF,
-PEM genérico e demais categorias não são persistidos. Dependências e metadados gerados como
+somente sete contextos EVM/Solana/BIP-39 de alto sinal. Com `SCAN_HISTORY=true`, todo
+candidato elegível segue para histórico completo em workers independentes. Bitcoin
+WIF, PEM genérico e demais categorias não são persistidos. Dependências e metadados gerados como
 `node_modules`, `.venv`, `site-packages`, `.pnpm`, `.yarn` e `Cargo.lock` são excluídos antes da leitura.
 A validação ativa de credenciais continua separada, desabilitada por padrão e
 condicionada à allowlist explícita.
@@ -24,6 +25,10 @@ relógio UTC
   -> GET /search/repositories
        q=created:INICIO..FIM is:public
        per_page=100
+  -> coletor paralelo: pushed:INICIO..FIM created:>=AGORA-4H size:>=1 is:public
+  -> repo antes vazio e agora preenchido: reabre candidato filtrado
+  -> created e pushed compartilham o mesmo bucket de quota
+  -> ambos priorizam as janelas mais recentes
   -> se total_count > 1000, divide a janela e consulta a metade nova primeiro
   -> pagina todos os resultados da subjanela
   -> incomplete_results=true: não conclui a janela; agenda retry
@@ -39,8 +44,8 @@ relógio UTC
   -> PostgreSQL cria o job idempotente e o redis-dispatcher publica a etapa
   -> metadata/head live e backfill consomem Redis Streams separados
   -> pré-scan do HEAD: clone raso, até 2.000 arquivos / 20 MB / 120s
-  -> sem sinal EVM/Solana/BIP39: encerra sem baixar histórico
-  -> com sinal EVM/Solana/BIP39: history-worker recebe scan_history completo
+  -> finding do HEAD é persistido imediatamente, se existir
+  -> history-worker recebe scan completo para todo elegível (`SCAN_HISTORY=true`)
   -> dependências vendorizadas e tipos fora da allowlist são descartados
   -> finding redigido e evento sanitizado
   -> draft pending_review
@@ -64,7 +69,7 @@ Os estados do candidato são:
 - `pending_review`: elegível; estado transitório antes da fila automática.
 - `filtered`: excluído por idioma, tamanho, fork, idade, archive ou estado.
 - `unavailable`: removido, identidade inconsistente ou metadados inválidos.
-- `scan_queued`: pré-scan automático ou histórico criado após autorização manual.
+- `scan_queued`: HEAD e histórico automáticos, ou scan criado por autorização manual.
 - `rejected`: rejeitado manualmente.
 
 ## Controle de quota
@@ -92,9 +97,9 @@ docker compose --profile scanner --profile discovery up -d --build
 ```
 
 Com `DISCOVERY_AUTO_QUEUE_SCANS=true`, os workers live têm capacidade reservada e
-nunca aguardam a recuperação. O clone de histórico só nasce após sinal `crypto`
-e usa workers independentes. PostgreSQL preserva o backlog; Redis Streams separa
-fisicamente cada etapa e lane em consumer groups próprios.
+nunca aguardam a recuperação. O histórico nasce após o HEAD de cada candidato
+elegível e usa workers independentes. PostgreSQL preserva o backlog; Redis Streams
+separa fisicamente cada etapa e lane em consumer groups próprios.
 
 ## Modo manual opcional
 
