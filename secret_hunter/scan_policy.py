@@ -42,8 +42,16 @@ DEPENDENCY_PATH_SEGMENTS = frozenset(
 )
 
 
-TRUFFLEHOG_EXCLUDE_GLOBS = tuple(
-    f"**/{segment}/**" for segment in sorted(DEPENDENCY_PATH_SEGMENTS)
+DEPENDENCY_METADATA_FILES = frozenset(
+    {
+        "cargo.lock",
+    }
+)
+
+
+TRUFFLEHOG_EXCLUDE_GLOBS = (
+    *(f"**/{segment}/**" for segment in sorted(DEPENDENCY_PATH_SEGMENTS)),
+    "**/Cargo.lock",
 )
 
 
@@ -52,10 +60,12 @@ def is_dependency_path(path: str) -> bool:
     normalized = path.replace("\\", "/").strip("/")
     if not normalized:
         return False
-    segments = (segment.casefold() for segment in normalized.split("/"))
+    parts = tuple(segment.casefold() for segment in normalized.split("/"))
+    if parts[-1] in DEPENDENCY_METADATA_FILES:
+        return True
     return any(
         segment in DEPENDENCY_PATH_SEGMENTS or segment.endswith(".egg-info")
-        for segment in segments
+        for segment in parts
     )
 
 

@@ -9,8 +9,8 @@ Com `DISCOVERY_AUTO_QUEUE_SCANS=true` e `DISCOVERY_HEAD_SCAN_SAMPLE_PERCENT=100`
 candidatos elegíveis seguem para pré-scan raso. Em paralelo, a Code Search consulta
 somente sete contextos EVM/Solana/BIP-39 de alto sinal. O histórico completo só é
 criado após um achado da allowlist fixa EVM/Solana/BIP39. Nessa fase, Bitcoin WIF,
-PEM genérico e demais categorias não são persistidos. Diretórios de dependências como
-`node_modules`, `.venv`, `site-packages`, `.pnpm` e `.yarn` são excluídos antes da leitura.
+PEM genérico e demais categorias não são persistidos. Dependências e metadados gerados como
+`node_modules`, `.venv`, `site-packages`, `.pnpm`, `.yarn` e `Cargo.lock` são excluídos antes da leitura.
 A validação ativa de credenciais continua separada, desabilitada por padrão e
 condicionada à allowlist explícita.
 

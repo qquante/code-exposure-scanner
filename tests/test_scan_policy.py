@@ -20,6 +20,8 @@ from secret_hunter.scan_policy import (
         ".venv/lib/site-packages/pkg/module.py",
         "vendor/pkg.egg-info/PKG-INFO",
         ".pnpm/ethers@6/node_modules/ethers/lib.js",
+        "Cargo.lock",
+        "workspace/crates/wallet/Cargo.lock",
     ),
 )
 def test_dependency_paths_are_rejected_case_insensitively(path: str) -> None:
@@ -29,7 +31,7 @@ def test_dependency_paths_are_rejected_case_insensitively(path: str) -> None:
 
 @pytest.mark.parametrize(
     "path",
-    ("src/wallet.ts", ".env", "contracts/vendor/Wallet.sol", "dist/config.js"),
+    ("src/wallet.ts", ".env", "contracts/vendor/Wallet.sol", "dist/config.js", "Cargo.toml"),
 )
 def test_authored_paths_remain_scannable(path: str) -> None:
     assert not is_dependency_path(path)
@@ -59,3 +61,4 @@ def test_crypto_scope_is_an_explicit_allowlist_not_a_category_match() -> None:
 def test_trufflehog_receives_equivalent_dependency_globs() -> None:
     assert "**/node_modules/**" in TRUFFLEHOG_EXCLUDE_GLOBS
     assert "**/site-packages/**" in TRUFFLEHOG_EXCLUDE_GLOBS
+    assert "**/Cargo.lock" in TRUFFLEHOG_EXCLUDE_GLOBS

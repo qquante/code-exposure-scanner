@@ -84,7 +84,8 @@ O corpus de regressão deve conter, no mínimo:
 - mnemonic com palavra ou checksum inválido;
 - keystore EVM criptografado separado de chave em texto puro;
 - placeholders e fixtures explicitamente marcadas.
-- exemplos e documentação dentro de dependências vendorizadas (`node_modules`, ambientes Python, `.pnpm`, `.yarn`).
+- exemplos e documentação dentro de dependências vendorizadas (`node_modules`, ambientes Python, `.pnpm`, `.yarn`);
+- checksums de dependência em `Cargo.lock`.
 
 ## Métricas acadêmicas
 

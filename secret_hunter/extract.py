@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 from . import patterns as P
 from .crypto_detection import extract_structural_crypto, valid_bip39_mnemonic
+from .scan_policy import is_dependency_path
 
 
 @dataclass
@@ -102,7 +103,7 @@ def extract_from_text(
 ) -> list[Finding]:
     """Varre um texto com todos os padrões e devolve Findings classificados."""
     findings: list[Finding] = []
-    if not text:
+    if not text or is_dependency_path(path):
         return findings
 
     for st in P.SECRET_TYPES:
