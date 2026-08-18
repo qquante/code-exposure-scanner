@@ -77,7 +77,7 @@ No Compose local, “secrets” ainda são arquivos plaintext no host. O script 
   workers.
 - Senha PostgreSQL: exige alterar o usuário no banco e o secret de forma coordenada.
 - Chave `fingerprint_key`: não rotacione diretamente; isso quebraria deduplicação. Planeje migração com período de duas chaves.
-- Chave `evidence_encryption_key`: preserve backup separado; rotação exige manter a chave antiga para ler o corpus já cifrado.
+- Senha `redis_evidence_password`: é a única camada do corpus bruto; rotacione de forma coordenada e nunca a exponha no dashboard.
 
 O script `init-secrets.ps1` preserva secrets existentes. `-RotateCoreSecrets` é para uma instalação vazia ou rotação planejada.
 

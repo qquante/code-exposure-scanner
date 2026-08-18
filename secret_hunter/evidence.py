@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 from datetime import datetime, timezone
@@ -55,14 +54,9 @@ def _sanitize_url(url: str) -> str:
 class RedisEvidenceStore:
     """Append-only lógico: um item por resposta HTTP, sem TTL nem trimming."""
 
-    def __init__(self, client: Any, stream_key: str, encryption_key: bytes):
-        key = bytes(encryption_key)
-        if len(key) != 32:
-            raise ValueError("a chave de evidência deve ter exatamente 32 bytes")
+    def __init__(self, client: Any, stream_key: str):
         self.client = client
         self.stream_key = stream_key
-        self._encryption_key = key
-        self.encryption_key_id = hashlib.sha256(key).hexdigest()[:16]
 
     @classmethod
     def from_config(cls, cfg: Config) -> "RedisEvidenceStore":
@@ -83,15 +77,7 @@ class RedisEvidenceStore:
             decode_responses=False,
         )
         client.ping()
-        try:
-            encryption_key = bytes.fromhex(cfg.evidence_encryption_key)
-        except ValueError as exc:
-            client.close()
-            raise ValueError("chave de criptografia da evidência inválida") from exc
-        if len(encryption_key) != 32:
-            client.close()
-            raise ValueError("chave de criptografia da evidência deve ter 32 bytes")
-        return cls(client, cfg.evidence_stream_key, encryption_key)
+        return cls(client, cfg.evidence_stream_key)
 
     def append_bytes(
         self,
@@ -100,12 +86,6 @@ class RedisEvidenceStore:
         *,
         metadata: Mapping[str, Any] | None = None,
     ) -> str:
-        try:
-            from Crypto.Cipher import AES
-            from Crypto.Random import get_random_bytes
-        except ImportError as exc:  # pragma: no cover - falha de empacotamento
-            raise RuntimeError("dependência pycryptodome não instalada") from exc
-
         raw = bytes(payload)
         captured_at = datetime.now(timezone.utc).isoformat()
         metadata_json = json.dumps(
@@ -115,27 +95,81 @@ class RedisEvidenceStore:
             sort_keys=True,
         )
         metadata_bytes = metadata_json.encode("utf-8")
-        nonce = get_random_bytes(12)
-        cipher = AES.new(self._encryption_key, AES.MODE_GCM, nonce=nonce, mac_len=16)
-        cipher.update(metadata_bytes)
-        ciphertext, auth_tag = cipher.encrypt_and_digest(raw)
         fields = {
-            "schema_version": "2",
+            "schema_version": "3",
             "source": source,
             "captured_at": captured_at,
-            "encryption": "AES-256-GCM",
-            "encryption_key_id": self.encryption_key_id,
-            "nonce": base64.b64encode(nonce).decode("ascii"),
-            "auth_tag": base64.b64encode(auth_tag).decode("ascii"),
-            "payload": ciphertext,
+            "protection": "redis-auth",
+            "payload": raw,
             "payload_sha256": hashlib.sha256(raw).hexdigest(),
-            "payload_ciphertext_sha256": hashlib.sha256(ciphertext).hexdigest(),
             "payload_size": str(len(raw)),
             "metadata": metadata_json,
             "metadata_sha256": hashlib.sha256(metadata_bytes).hexdigest(),
         }
         entry_id = self.client.xadd(self.stream_key, fields)
         return entry_id.decode("ascii") if isinstance(entry_id, bytes) else str(entry_id)
+
+    def proof(self, *, entry_id: str | None = None, limit: int = 3) -> list[dict[str, Any]]:
+        """Verifica hashes sem devolver nem imprimir o corpo bruto armazenado."""
+        records = (
+            self.client.xrange(self.stream_key, min=entry_id, max=entry_id, count=1)
+            if entry_id
+            else self.client.xrevrange(
+                self.stream_key, max="+", min="-", count=max(1, min(limit, 100))
+            )
+        )
+        return [self._proof_record(item_id, fields) for item_id, fields in records]
+
+    @staticmethod
+    def _proof_record(item_id: Any, fields: Mapping[Any, Any]) -> dict[str, Any]:
+        def raw(name: str) -> bytes:
+            value = fields.get(name, fields.get(name.encode("utf-8")))
+            if value is None:
+                raise ValueError(f"campo de evidencia ausente: {name}")
+            return value if isinstance(value, bytes) else str(value).encode("utf-8")
+
+        def text(name: str) -> str:
+            return raw(name).decode("utf-8")
+
+        record_id = item_id.decode("ascii") if isinstance(item_id, bytes) else str(item_id)
+        schema_version = text("schema_version")
+        metadata = raw("metadata")
+        metadata_ok = hashlib.sha256(metadata).hexdigest() == text("metadata_sha256")
+        result: dict[str, Any] = {
+            "entry_id": record_id,
+            "schema_version": schema_version,
+            "source": text("source"),
+            "captured_at": text("captured_at"),
+            "payload_size": int(text("payload_size")),
+            "metadata_sha256_ok": metadata_ok,
+            "plaintext_exposed": False,
+        }
+        if schema_version == "3":
+            payload = raw("payload")
+            result["protection"] = text("protection")
+            result["payload_sha256"] = text("payload_sha256")
+            result["payload_sha256_ok"] = (
+                hashlib.sha256(payload).hexdigest() == result["payload_sha256"]
+            )
+            result["payload_size_ok"] = len(payload) == result["payload_size"]
+            result["status"] = (
+                "verified"
+                if metadata_ok and result["payload_sha256_ok"] and result["payload_size_ok"]
+                else "integrity_failed"
+            )
+        else:
+            ciphertext = raw("payload")
+            result["protection"] = text("encryption")
+            result["ciphertext_sha256_ok"] = (
+                hashlib.sha256(ciphertext).hexdigest()
+                == text("payload_ciphertext_sha256")
+            )
+            result["status"] = (
+                "legacy_encrypted"
+                if metadata_ok and result["ciphertext_sha256_ok"]
+                else "integrity_failed"
+            )
+        return result
 
     def capture_http_response(
         self,

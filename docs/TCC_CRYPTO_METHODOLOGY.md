@@ -114,7 +114,8 @@ persistir o segredo bruto.
 1. Somente repositórios públicos dentro da janela declarada.
 2. Nenhuma consulta de saldo, RPC, explorer, autenticação, assinatura ou broadcast.
 3. Nenhum segredo bruto no PostgreSQL, log, dashboard, relatório ou dataset do TCC.
-   As respostas HTTP preservadas no Redis são cifradas com AES-256-GCM antes da persistência.
+   As respostas HTTP brutas ficam em Redis isolado, protegido por senha única e
+   fora do dataset acadêmico exportado.
 4. Resultados acadêmicos apenas agregados; exemplos usam fixtures sintéticas.
 5. Divulgação externa permanece separada e exige revisão humana.
 6. Uma detecção `not_checked` significa apenas detecção passiva.

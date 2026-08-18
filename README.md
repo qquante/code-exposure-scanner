@@ -2,7 +2,7 @@
 
 Pipeline defensivo para localizar segredos em código público do GitHub e preparar divulgação responsável. O deploy distribuído usa PostgreSQL como fonte de verdade e Redis Streams autenticado para transportar jobs entre workers independentes, registrar eventos sanitizados e preservar evidência acadêmica bruta.
 
-> Use somente em repositórios próprios, escopos autorizados ou divulgação responsável. Validação ativa de credenciais de terceiros fica desabilitada. O PostgreSQL nunca recebe o segredo bruto e o serviço nunca publica detalhes sensíveis em Issue pública. Quando habilitado, o Redis de evidências guarda a resposta bruta cifrada com AES-256-GCM e deve ser tratado como material altamente sensível.
+> Use somente em repositórios próprios, escopos autorizados ou divulgação responsável. Validação ativa de credenciais de terceiros fica desabilitada. O PostgreSQL nunca recebe o segredo bruto e o serviço nunca publica detalhes sensíveis em Issue pública. Quando habilitado, o Redis guarda a resposta bruta protegida somente pela senha da instância e deve ser tratado como material altamente sensível.
 
 ## O que está implementado
 
@@ -11,7 +11,7 @@ Pipeline defensivo para localizar segredos em código público do GitHub e prepa
 - Fetch por SHA de blob imutável para evitar corrida entre busca e alteração do arquivo.
 - Histórico completo por Git nativo e TruffleHog 3.96.0 com verificação externa desabilitada.
 - PostgreSQL com jobs idempotentes, leases, heartbeat, `FOR UPDATE SKIP LOCKED`, retry com backoff e limitador de Code Search compartilhado entre containers.
-- Redis Streams autenticado e persistente para filas por estágio, eventos sanitizados e respostas REST cifradas com AES-256-GCM, sem porta publicada, TTL ou trimming automático.
+- Redis Streams autenticado e persistente para filas por estágio, eventos sanitizados e respostas REST brutas com SHA-256, sem porta publicada, TTL ou trimming automático.
 - Um draft ativo por repositório, agregando achados sem duplicar alertas.
 - O pipeline cripto interno é automático; divulgação externa continua sob aprovação humana. O notification worker prefere Private Vulnerability Reporting e nunca abre Issue pública por padrão.
 - API administrativa autenticada que lista catálogo, achados, localizações, runs, jobs e drafts. Nenhuma resposta contém segredo bruto.
@@ -26,7 +26,7 @@ O SQLite permanece apenas como modo local/legado de processo único. Não o use 
 
 ## PostgreSQL e Redis têm papéis separados
 
-PostgreSQL permanece como fonte de verdade transacional para deduplicação, jobs, achados, drafts e auditoria. Redis Streams separa `metadata-live`, `metadata-backfill`, `head-live`, `head-backfill`, os streams legados, `search`, `blob`, `history` e `ingest`; também recebe eventos sanitizados e o corpus HTTP bruto já cifrado. O Redis nunca decide o estado final do job e o barramento não recebe o valor bruto encontrado.
+PostgreSQL permanece como fonte de verdade transacional para deduplicação, jobs, achados, drafts e auditoria. Redis Streams separa `metadata-live`, `metadata-backfill`, `head-live`, `head-backfill`, os streams legados, `search`, `blob`, `history` e `ingest`; também recebe eventos sanitizados e o corpus HTTP bruto protegido por autenticação Redis. O Redis nunca decide o estado final do job e os streams operacionais não recebem o valor bruto encontrado.
 
 ## Subir localmente com Docker
 
@@ -174,7 +174,8 @@ operação/produção.
 
 - O segredo existe temporariamente em uma string Python, é usado para HMAC-SHA256 e a referência é removida. Python não garante zeroização física dessa memória.
 - O PostgreSQL recebe apenas fingerprint HMAC, hint fixo do tipo e metadados. Não há prefixo+sufixo do segredo no deploy distribuído.
-- O corpus HTTP bruto é cifrado com AES-256-GCM antes de entrar no Redis; a chave fica separada do servidor Redis.
+- O corpus HTTP bruto fica no Redis em formato original, com SHA-256 para conferência, protegido somente pela senha do Redis e pelo isolamento Docker.
+- O volume Redis não possui criptografia de aplicação. Não exponha a porta, a senha, o volume ou o comando de leitura bruta.
 - A chave HMAC deve ser igual em todos os workers e não deve ser rotacionada sem uma migração planejada.
 - Validação de API é opt-in e só funciona quando o repositório está em `SH_AUTHORIZED_VALIDATION_REPOS`. Ela faz uma chamada mínima de autenticação, não lê dados de negócio.
 - No Compose, use `VALIDATE_SECRETS=true` e `AUTHORIZED_VALIDATION_REPOS=owner/repo[,owner/repo]`. Mantenha desabilitado fora de escopo formalmente autorizado.

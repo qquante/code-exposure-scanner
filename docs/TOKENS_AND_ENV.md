@@ -57,10 +57,9 @@ ambiente autorizado, o texto publico nao inclui segredo, caminho ou commit.
 - `fingerprint_key.txt`: chave HMAC usada para deduplicar sem persistir o segredo
   bruto. Nao rotacione em banco existente sem migracao.
 - `admin_api_token.txt`: bearer token da API administrativa local.
-- `redis_evidence_password.txt`: senha da instância Redis usada por Streams e evidência bruta.
-- `evidence_encryption_key.txt`: chave AES-256 usada somente pelos clientes que cifram a evidência antes do Redis.
+- `redis_evidence_password.txt`: única senha da instância Redis, Streams e evidência bruta.
 
-O script gera esses cinco valores com RNG criptografico e restringe a ACL ao
+O script gera esses quatro valores com RNG criptografico e restringe a ACL ao
 usuario atual e `SYSTEM` no Windows.
 
 ## 4. Criar os arquivos sem expor tokens no shell

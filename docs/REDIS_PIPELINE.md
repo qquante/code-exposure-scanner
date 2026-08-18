@@ -6,7 +6,7 @@ separadas:
 - PostgreSQL é a fonte de verdade para jobs, idempotência, candidatos, achados,
   runs, drafts e auditoria.
 - Redis Streams transporta jobs entre workers independentes, registra eventos
-  sanitizados e preserva a evidência HTTP bruta cifrada do TCC.
+  sanitizados e preserva a evidência HTTP bruta do TCC sob senha única.
 
 ```text
 GitHub Repository Search (API limitada)       Code Search (API limitada)
@@ -65,7 +65,7 @@ banco. Redis não decide se um job está concluído.
 | `<prefix>:jobs:ingest` | `<prefix>:workers:ingest` | drop-zone local |
 | `<prefix>:events` | `<prefix>:indexer` | eventos operacionais sanitizados |
 | `<prefix>:dead-letter` | operador | mensagens inválidas ou sem rota |
-| `<prefix>:raw-evidence` | corpus TCC | respostas HTTP cifradas com AES-256-GCM |
+| `<prefix>:raw-evidence` | corpus TCC | respostas HTTP brutas com SHA-256, protegidas por Redis AUTH |
 
 O dashboard consulta `GET /streams` para lag/pendências/consumidores e
 `GET /events` para o log já indexado no PostgreSQL.
@@ -78,9 +78,9 @@ substituídos por `[redacted]`. Findings publicam somente fingerprint HMAC, hint
 tipo, risco e localização. O valor detectado nunca entra no barramento.
 
 O stream de evidência é deliberadamente diferente: preserva o corpo HTTP para a
-pesquisa, mas somente como ciphertext AES-256-GCM. A chave fica nos containers
-clientes, nunca no servidor Redis. A instância não publica porta no host, exige
-senha e persiste com AOF.
+pesquisa em formato bruto. A instância não publica porta no host, exige uma senha
+única e persiste com AOF. Quem obtiver a senha e alcançar o Redis poderá ler o
+payload; por isso ela não deve ser compartilhada nem usada no dashboard.
 
 ## Subir e observar
 

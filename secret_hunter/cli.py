@@ -276,6 +276,53 @@ def cmd_stream_stats(cfg: Config, _args) -> int:
     return 0
 
 
+def cmd_redis_evidence_proof(cfg: Config, args) -> int:
+    """Prova presença e integridade no Redis sem expor o payload bruto."""
+    import json
+    import secrets
+    from datetime import datetime, timezone
+
+    from .evidence import RedisEvidenceStore
+
+    store = RedisEvidenceStore.from_config(cfg)
+    try:
+        target_entry = args.entry_id
+        if args.demo:
+            payload = json.dumps(
+                {
+                    "kind": "controlled-tcc-demo",
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "nonce": secrets.token_hex(16),
+                    "contains_real_secret": False,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            target_entry = store.append_bytes(
+                "tcc.controlled-demo",
+                payload,
+                metadata={
+                    "controlled": True,
+                    "contains_real_secret": False,
+                    "purpose": "redis-integrity-proof",
+                },
+            )
+        proofs = store.proof(entry_id=target_entry, limit=args.limit)
+        result = {
+            "backend": "redis",
+            "stream": store.stream_key,
+            "access_layer": "single-redis-password",
+            "raw_payload_printed": False,
+            "records": proofs,
+        }
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    finally:
+        store.close()
+    accepted = {"verified", "legacy_encrypted"}
+    return 0 if proofs and all(item["status"] in accepted for item in proofs) else 2
+
+
 def cmd_notification_worker(cfg: Config, args) -> int:
     from .pipeline import run_notification_worker
 
@@ -457,6 +504,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     rs = sub.add_parser("stream-stats", help="mostra lag e pendências dos Redis Streams")
     rs.set_defaults(func=cmd_stream_stats)
+
+    proof = sub.add_parser(
+        "redis-evidence-proof",
+        help="prova integridade da evidência Redis sem mostrar o conteúdo",
+    )
+    proof.add_argument("--entry-id", help="ID exato do Redis Stream")
+    proof.add_argument("--limit", type=int, default=3, help="quantidade recente (1-100)")
+    proof.add_argument("--demo", action="store_true", help="grava e verifica amostra controlada")
+    proof.set_defaults(func=cmd_redis_evidence_proof)
 
     nw = sub.add_parser("notification-worker", help="envia apenas drafts aprovados")
     nw.add_argument("--once", action="store_true")

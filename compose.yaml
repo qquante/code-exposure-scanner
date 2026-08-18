@@ -63,7 +63,6 @@ x-redis-environment: &redis-environment
   SH_EVIDENCE_REDIS_HOST: redis-evidence
   SH_EVIDENCE_REDIS_PORT: "6379"
   SH_EVIDENCE_REDIS_PASSWORD_FILE: /run/secrets/redis_evidence_password
-  SH_EVIDENCE_ENCRYPTION_KEY_FILE: /run/secrets/evidence_encryption_key
   SH_EVIDENCE_STREAM_KEY: ${RAW_EVIDENCE_STREAM_KEY:-secret-hunter:raw-evidence}
 
 x-ingest-volume: &ingest-volume
@@ -199,7 +198,6 @@ services:
       - fingerprint_key
       - admin_api_token
       - redis_evidence_password
-      - evidence_encryption_key
     ports:
       - "${API_BIND_IP:-127.0.0.1}:${API_PORT:-8000}:8000"
     volumes:
@@ -234,7 +232,6 @@ services:
       - postgres_password
       - fingerprint_key
       - redis_evidence_password
-      - evidence_encryption_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -254,7 +251,6 @@ services:
       - postgres_password
       - fingerprint_key
       - redis_evidence_password
-      - evidence_encryption_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -277,7 +273,6 @@ services:
       - fingerprint_key
       - github_search_token
       - redis_evidence_password
-      - evidence_encryption_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -300,7 +295,6 @@ services:
       - fingerprint_key
       - github_search_token
       - redis_evidence_password
-      - evidence_encryption_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -335,7 +329,6 @@ services:
       - postgres_password
       - fingerprint_key
       - redis_evidence_password
-      - evidence_encryption_key
     volumes:
       - *ingest-volume
     depends_on:
@@ -375,14 +368,12 @@ services:
       SH_EVIDENCE_REDIS_HOST: redis-evidence
       SH_EVIDENCE_REDIS_PORT: "6379"
       SH_EVIDENCE_REDIS_PASSWORD_FILE: /run/secrets/redis_evidence_password
-      SH_EVIDENCE_ENCRYPTION_KEY_FILE: /run/secrets/evidence_encryption_key
       SH_EVIDENCE_STREAM_KEY: ${RAW_EVIDENCE_STREAM_KEY:-secret-hunter:raw-evidence}
     secrets:
       - postgres_password
       - fingerprint_key
       - github_search_token
       - redis_evidence_password
-      - evidence_encryption_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -407,7 +398,6 @@ services:
       - fingerprint_key
       - github_search_token
       - redis_evidence_password
-      - evidence_encryption_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -432,7 +422,6 @@ services:
       - fingerprint_key
       - github_search_token
       - redis_evidence_password
-      - evidence_encryption_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -457,7 +446,6 @@ services:
       - fingerprint_key
       - github_search_token
       - redis_evidence_password
-      - evidence_encryption_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -479,7 +467,6 @@ services:
       - postgres_password
       - fingerprint_key
       - redis_evidence_password
-      - evidence_encryption_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -501,7 +488,6 @@ services:
       - postgres_password
       - fingerprint_key
       - redis_evidence_password
-      - evidence_encryption_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -523,7 +509,6 @@ services:
       - postgres_password
       - fingerprint_key
       - redis_evidence_password
-      - evidence_encryption_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -545,7 +530,6 @@ services:
       - postgres_password
       - fingerprint_key
       - redis_evidence_password
-      - evidence_encryption_key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -589,7 +573,6 @@ services:
       - postgres_password
       - fingerprint_key
       - redis_evidence_password
-      - evidence_encryption_key
     depends_on:
       postgres-test:
         condition: service_healthy
@@ -611,8 +594,6 @@ secrets:
     file: ${ADMIN_API_TOKEN_FILE:-./.secrets/admin_api_token.txt}
   redis_evidence_password:
     file: ${REDIS_EVIDENCE_PASSWORD_FILE:-./.secrets/redis_evidence_password.txt}
-  evidence_encryption_key:
-    file: ${EVIDENCE_ENCRYPTION_KEY_FILE:-./.secrets/evidence_encryption_key.txt}
   github_search_token:
     file: ${GITHUB_SEARCH_TOKEN_FILE:-./.secrets/github_search_token.txt}
   github_notify_token:

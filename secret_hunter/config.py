@@ -61,7 +61,6 @@ class Config:
     evidence_redis_port: int = 6379
     evidence_redis_db: int = 0
     evidence_redis_password: str = field(default="", repr=False)
-    evidence_encryption_key: str = field(default="", repr=False)
     evidence_stream_key: str = "secret-hunter:raw-evidence"
 
     # Redis Streams transporta jobs/eventos entre containers independentes.
@@ -153,11 +152,6 @@ class Config:
         cfg.evidence_redis_password = _read_secret(
             ("SH_EVIDENCE_REDIS_PASSWORD",),
             ("SH_EVIDENCE_REDIS_PASSWORD_FILE",),
-            "",
-        )
-        cfg.evidence_encryption_key = _read_secret(
-            ("SH_EVIDENCE_ENCRYPTION_KEY",),
-            ("SH_EVIDENCE_ENCRYPTION_KEY_FILE",),
             "",
         )
 
@@ -313,13 +307,8 @@ class Config:
             raise ValueError("senha do PostgreSQL ausente")
         if (self.evidence_enabled or self.event_bus_enabled) and not self.evidence_redis_password:
             raise ValueError("senha do Redis ausente")
-        if self.evidence_enabled:
-            if len(self.evidence_encryption_key) != 64:
-                raise ValueError("SH_EVIDENCE_ENCRYPTION_KEY deve ter 64 caracteres hexadecimais")
-            try:
-                bytes.fromhex(self.evidence_encryption_key)
-            except ValueError as exc:
-                raise ValueError("SH_EVIDENCE_ENCRYPTION_KEY deve ser hexadecimal") from exc
+        if self.evidence_enabled and len(self.evidence_redis_password.encode("utf-8")) < 32:
+            raise ValueError("a senha do Redis deve ter pelo menos 32 bytes")
         if self.event_bus_dispatch_interval_ms < 10:
             raise ValueError("SH_EVENT_BUS_DISPATCH_INTERVAL_MS deve ser >= 10")
 
