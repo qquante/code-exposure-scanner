@@ -190,9 +190,11 @@
         </section>
 
         <section class="view" id="view-findings" data-view-panel="findings" hidden>
-          <div class="page-heading compact-heading"><div><span class="eyebrow"><i></i> Triagem segura</span><h1>Achados</h1><p>Segredos identificados sem persistência do valor bruto.</p></div></div>
-          <div class="toolbar"><div class="filter-tabs" data-filter-group="findings"><button class="active" data-filter="all">Todos</button><button data-filter="critical">Críticos</button><button data-filter="high">Altos</button><button data-filter="open">Abertos</button><button data-filter="notified">Notificados</button></div><input class="search-input" id="finding-search" type="search" placeholder="Buscar plataforma ou repo…"></div>
-          <div class="table-panel"><div class="table-scroll"><table><thead><tr><th>Risco</th><th>Repositório</th><th>Tipo / Plataforma</th><th>Ambiente</th><th>Validação</th><th>Localizações</th><th class="align-right">Detalhes</th></tr></thead><tbody id="finding-table"></tbody></table></div><div class="empty-state" id="finding-empty" hidden><span>✓</span><h3>Nenhum achado</h3><p>A fila está limpa. Isso não comprova ausência global de vazamentos.</p></div></div>
+          <div class="page-heading compact-heading"><div><span class="eyebrow"><i></i> Triagem segura</span><h1>Achados</h1><p>Veja o identificador redigido e abra a exposição exata no GitHub em um clique.</p></div></div>
+          <div class="finding-safety-note"><strong>Chave protegida</strong><span>O painel mostra somente um hint redigido para identificação. O valor completo não é armazenado nem revelado.</span></div>
+          <div class="toolbar"><div class="filter-tabs" data-filter-group="findings"><button class="active" data-filter="all">Todos</button><button data-filter="critical">Críticos</button><button data-filter="high">Altos</button><button data-filter="open">Abertos</button><button data-filter="notified">Notificados</button></div><input class="search-input" id="finding-search" type="search" placeholder="Buscar chave, provedor, arquivo ou repo…"></div>
+          <div class="finding-grid" id="finding-grid"></div>
+          <div class="empty-state standalone" id="finding-empty" hidden><span>✓</span><h3>Nenhum achado</h3><p>A fila está limpa. Isso não comprova ausência global de vazamentos.</p></div>
         </section>
 
         <section class="view" id="view-notifications" data-view-panel="notifications" hidden>

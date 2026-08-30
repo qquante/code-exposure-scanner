@@ -53,6 +53,11 @@ def test_dashboard_exposes_all_operational_sections_and_actions() -> None:
     assert "latest_commit_sha" in javascript
     assert "window.setInterval(refreshLive, 2000)" in javascript
     assert 'rel="noopener noreferrer"' in javascript
+    assert 'id="finding-grid"' in index
+    assert "CREDENCIAL ENCONTRADA · REDIGIDA" in javascript
+    assert "item.secret_hint" in javascript
+    assert "Abrir no GitHub ↗" in javascript
+    assert "finding-github-link" in javascript
     assert 'window.location.hash.slice(1) || "overview"' in javascript
     assert 'data-action="provider-findings"' in javascript
     assert "renderAiProviders" in javascript

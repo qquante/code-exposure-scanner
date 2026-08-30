@@ -366,36 +366,57 @@
     const query = $("#finding-search").value.trim().toLowerCase();
     return state.findings.filter((item) => {
       const matchesFilter = filter === "all" || item.risk === filter || item.status === filter;
-      const haystack = `${item.repository} ${item.platform} ${item.type_id}`.toLowerCase();
+      const haystack = `${item.repository} ${item.platform} ${item.type_id} ${item.secret_hint || ""} ${item.latest_path || ""}`.toLowerCase();
       return matchesFilter && (!query || haystack.includes(query));
     });
   }
 
   function renderFindings() {
     const rows = filteredFindings();
-    const body = $("#finding-table");
-    body.innerHTML = rows.map((item) => {
+    const grid = $("#finding-grid");
+    grid.innerHTML = rows.map((item) => {
       const githubUrl = githubLocationUrl(item.repository, {
         path: item.latest_path,
         branch: item.latest_branch,
         commit_sha: item.latest_commit_sha,
         line_start: item.latest_line_start,
       });
-      return `<tr>
-        <td>${riskPill(item.risk)}</td>
-        <td class="repo-cell"><strong>${esc(item.repository)}</strong><small>${statusPill(item.status)}</small></td>
-        <td><span class="primary-cell">${esc(item.platform)}</span><small class="secondary-cell mono">${esc(item.type_id)}</small></td>
-        <td>${esc(item.environment || "unknown")}</td>
-        <td>${statusPill(item.validation_status || "not_checked")}</td>
-        <td><span class="primary-cell">${Number(item.location_count || 0)}</span><small class="secondary-cell">localização(ões)</small></td>
-        <td><div class="row-actions">
-          ${githubUrl ? `<a class="row-action primary" href="${esc(githubUrl)}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>` : ""}
-          <button class="row-action" data-action="finding-detail" data-id="${Number(item.id)}">Detalhes</button>
-        </div></td>
-      </tr>`;
+      const locationPath = item.latest_path || "Localização histórica";
+      const line = Math.max(0, Number(item.latest_line_start || 0));
+      const commit = item.latest_commit_sha ? truncated(item.latest_commit_sha, 12) : "HEAD";
+      return `<article class="finding-card finding-${esc(item.risk || "unknown")}">
+        <header class="finding-card-header">
+          <div class="finding-provider"><span>${esc(item.platform || "Provedor")}</span><strong>${esc(item.type_id)}</strong></div>
+          <div class="finding-card-pills">${riskPill(item.risk)}${statusPill(item.status)}</div>
+        </header>
+        <div class="finding-secret-preview">
+          <span>CREDENCIAL ENCONTRADA · REDIGIDA</span>
+          <code>${esc(item.secret_hint || "Sem hint disponível")}</code>
+          <small>Use este identificador para reconhecer o achado sem revelar o segredo completo.</small>
+        </div>
+        <div class="finding-repository">
+          <span>REPOSITÓRIO</span>
+          <strong>${esc(item.repository)}</strong>
+        </div>
+        <div class="finding-location">
+          <span>LOCALIZAÇÃO MAIS RECENTE</span>
+          <strong title="${esc(locationPath)}">${esc(locationPath)}</strong>
+          <small>${line ? `linha ${line} · ` : ""}commit ${esc(commit)} · ${Number(item.location_count || 0)} localização(ões)</small>
+        </div>
+        <dl class="finding-meta-grid">
+          <div><dt>Validação</dt><dd>${statusPill(item.validation_status || "not_checked")}</dd></div>
+          <div><dt>Ambiente</dt><dd>${esc(item.environment || "unknown")}</dd></div>
+          <div><dt>Confiança</dt><dd>${esc(item.confidence || "unknown")}</dd></div>
+          <div><dt>Última detecção</dt><dd>${esc(relativeDate(item.last_seen))}</dd></div>
+        </dl>
+        <footer class="finding-card-actions">
+          ${githubUrl ? `<a class="button button-primary compact finding-github-link" href="${esc(githubUrl)}" target="_blank" rel="noopener noreferrer">Abrir no GitHub ↗</a>` : `<span class="finding-link-unavailable">Link indisponível</span>`}
+          <button class="button button-ghost compact" data-action="finding-detail" data-id="${Number(item.id)}">Ver todas as localizações</button>
+        </footer>
+      </article>`;
     }).join("");
     $("#finding-empty").hidden = rows.length > 0;
-    body.parentElement.hidden = rows.length === 0;
+    grid.hidden = rows.length === 0;
   }
 
   function filteredNotifications() {

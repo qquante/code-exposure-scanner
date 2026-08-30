@@ -77,8 +77,8 @@ http://127.0.0.1:8000/
 Ele solicita o conteúdo de `.secrets/admin_api_token.txt`. O token fica somente
 na sessão da aba (`sessionStorage`), nunca em URL, cookie ou `localStorage`. O
 dashboard cobre visão geral, candidatos, achados, notificações, jobs, pipeline Redis, execuções
-e catálogo de detectores. Achados novos aparecem no pulso de 2 segundos e possuem link
-direto para arquivo, commit e linha no GitHub, sem incluir o segredo na URL.
+e catálogo de detectores. Achados novos aparecem no pulso de 2 segundos em cards com o
+hint redigido, arquivo, linha e link direto ao GitHub, sem expor o segredo completo.
 A rota `/#ai-providers` agrupa as defesas por operador de IA, mostra sinais de
 detecção, quantidade de achados e oferece filtro direto para cada provedor.
 
