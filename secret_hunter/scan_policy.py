@@ -1,15 +1,17 @@
 """Política central do escopo de varredura automática.
 
 O detector genérico continua disponível para uso local/forense, mas o serviço
-distribuído em produção persiste somente material de carteira EVM/Solana e
-frases BIP39. Dependências vendorizadas são ignoradas antes de consumir API,
-CPU ou espaço de evidência.
+distribuído persiste apenas carteiras EVM/Solana, frases BIP39 e credenciais de
+provedores de IA explicitamente catalogadas. Dependências vendorizadas são
+ignoradas antes de consumir API, CPU ou espaço de evidência.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 from typing import TypeVar
+
+from .ai_detection.catalog import AI_SECRET_TYPE_IDS
 
 
 CRYPTO_WALLET_TYPE_IDS = frozenset(
@@ -101,12 +103,24 @@ def is_dependency_path(path: str) -> bool:
 
 _FindingT = TypeVar("_FindingT")
 
+AUTOMATIC_SECRET_TYPE_IDS = CRYPTO_WALLET_TYPE_IDS | AI_SECRET_TYPE_IDS
+
 
 def filter_crypto_wallet_findings(findings: Iterable[_FindingT]) -> list[_FindingT]:
-    """Mantém somente detectores explicitamente aprovados para esta fase."""
+    """Mantém somente os detectores de carteira, para compatibilidade e testes."""
     return [
         finding
         for finding in findings
         if getattr(finding, "type_id", "") in CRYPTO_WALLET_TYPE_IDS
+        and not is_dependency_path(str(getattr(finding, "path", "")))
+    ]
+
+
+def filter_automatic_findings(findings: Iterable[_FindingT]) -> list[_FindingT]:
+    """Mantém os detectores aprovados no pipeline automático cripto + IA."""
+    return [
+        finding
+        for finding in findings
+        if getattr(finding, "type_id", "") in AUTOMATIC_SECRET_TYPE_IDS
         and not is_dependency_path(str(getattr(finding, "path", "")))
     ]

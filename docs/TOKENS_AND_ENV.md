@@ -91,7 +91,7 @@ SEARCH_SCOPE=repo:owner/repo
 ALLOW_GLOBAL_SEARCH=false
 SEARCH_WINDOW_HOURS=1
 SEARCH_MAX_PAGES=1
-SEARCH_TYPES=evm_private_key_to_account,evm_ethers_wallet,evm_account_from_key,evm_private_key_env,solana_from_secret_key,solana_from_seed,bip39_mnemonic_to_account
+SEARCH_TYPES=openai_proj,anthropic_api_key,openrouter_api_key,groq_api_key,cerebras_api_key_context,mistral_api_key_context,deepseek_api_key_context,together_api_key_context,huggingface,replicate_api_token
 DISCOVERY_WINDOW_SECONDS=60
 DISCOVERY_HEAD_DELAY_SECONDS=3600
 DISCOVERY_RECONCILE_SECONDS=900
@@ -108,6 +108,11 @@ VALIDATE_CRYPTO=false
 AUTHORIZED_VALIDATION_REPOS=
 ALLOW_PUBLIC_CONTACT_ISSUE=false
 ```
+
+`SEARCH_TYPES` controla apenas a busca complementar do GitHub Code Search e deve
+permanecer limitada por `SEARCH_SCOPE`. A descoberta de repositórios recentes já
+envia o HEAD e o histórico elegíveis ao extrator completo cripto + IA, sem depender
+dessa lista. Detectar não significa validar: nenhuma chave de IA é chamada.
 
 Os campos `*_FILE` do `.env` sao apenas caminhos. Os valores secretos ficam em
 `.secrets/` e sao montados nos containers em `/run/secrets/...`.

@@ -17,6 +17,7 @@ from urllib.parse import quote
 
 import requests
 
+from .ai_detection.catalog import AI_SEARCH_QUERIES
 from .config import Config
 from .evidence import maybe_evidence_store
 
@@ -32,7 +33,6 @@ SEARCH_QUERIES: dict[str, str] = {
     "mercadopago": '"APP_USR-"',
     "aws_akia": '"AKIA"',
     "aws_asia": '"ASIA"',
-    "google_api_key": '"AIza"',
     "mongodb_uri": '"mongodb+srv://"',
     "postgres_uri": '"postgresql://"',
     "mysql_uri": '"mysql://"',
@@ -41,8 +41,6 @@ SEARCH_QUERIES: dict[str, str] = {
     "github_fine_grained": '"github_pat_"',
     "github_oauth": '"gho_"',
     "gitlab_pat": '"glpat-"',
-    "openai_proj": '"sk-proj-"',
-    "huggingface": '"hf_"',
     "slack_token": '"xoxb-"',
     "private_key_pem": '"PRIVATE KEY"',
     "evm_private_key_to_account": '"privateKeyToAccount"',
@@ -52,6 +50,7 @@ SEARCH_QUERIES: dict[str, str] = {
     "solana_from_secret_key": '"Keypair.fromSecretKey"',
     "solana_from_seed": '"Keypair.fromSeed"',
     "bip39_mnemonic_to_account": '"mnemonicToAccount"',
+    **AI_SEARCH_QUERIES,
 }
 
 

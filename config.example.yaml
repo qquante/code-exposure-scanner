@@ -21,7 +21,7 @@ worker_concurrency: 4
 job_lease_seconds: 180
 worker_poll_seconds: 2
 search_window_hours: 1
-search_types: [evm_private_key_to_account, evm_ethers_wallet, evm_account_from_key, evm_private_key_env, solana_from_secret_key, solana_from_seed, bip39_mnemonic_to_account]
+search_types: [evm_private_key_to_account, evm_ethers_wallet, evm_account_from_key, evm_private_key_env, solana_from_secret_key, solana_from_seed, bip39_mnemonic_to_account, openai_proj, openai_service, anthropic_api_key, google_api_key, openrouter_api_key, groq_api_key, cerebras_api_key_context, mistral_api_key_context, deepseek_api_key_context, together_api_key_context, huggingface, replicate_api_token]
 search_requests_per_minute: 8
 search_scope: "repo:owner/repo"
 allow_global_search: false

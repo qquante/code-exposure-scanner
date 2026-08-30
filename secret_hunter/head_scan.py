@@ -23,7 +23,18 @@ _PRIORITY_NAMES = (
     "private",
     "secret",
     "seed",
+    "token",
+    "auth",
     "wallet",
+    "openai",
+    "anthropic",
+    "claude",
+    "gemini",
+    "openrouter",
+    "groq",
+    "mistral",
+    "cerebras",
+    "llm",
 )
 
 

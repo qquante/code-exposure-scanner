@@ -8,9 +8,9 @@ artificialmente um lote.
 
 Com `DISCOVERY_AUTO_QUEUE_SCANS=true` e `DISCOVERY_HEAD_SCAN_SAMPLE_PERCENT=100`, todos os
 candidatos elegíveis seguem para pré-scan raso. Em paralelo, a Code Search consulta
-somente sete contextos EVM/Solana/BIP-39 de alto sinal. Com `SCAN_HISTORY=true`, todo
+os tipos explicitamente selecionados em `SEARCH_TYPES`. Com `SCAN_HISTORY=true`, todo
 candidato elegível segue para histórico completo em workers independentes. Bitcoin
-WIF, PEM genérico e demais categorias não são persistidos. Dependências e metadados gerados como
+WIF, PEM genérico e categorias fora da allowlist cripto/IA não são persistidos. Dependências e metadados gerados como
 `node_modules`, `.venv`, `site-packages`, `.pnpm`, `.yarn` e `Cargo.lock` são excluídos antes da leitura.
 A validação ativa de credenciais continua separada, desabilitada por padrão e
 condicionada à allowlist explícita.
@@ -124,7 +124,7 @@ produzem no máximo um job.
 | `SEARCH_WINDOW_HOURS` | 1 | agenda a Code Search uma vez por hora |
 | `SEARCH_REQUESTS_PER_MINUTE` | 8 | teto local/compartilhado; ambiente ativo usa 5 |
 | `SEARCH_MAX_PAGES` | 1 | processa apenas a página mais recentemente indexada por query |
-| `SEARCH_TYPES` | vazio | IDs de queries; ambiente ativo usa somente os sete tipos cripto |
+| `SEARCH_TYPES` | vazio | IDs de queries complementares; use somente em `org:`, `user:` ou `repo:` autorizado |
 | `DISCOVERY_POLL_SECONDS` | 15 | frequência do scheduler |
 | `DISCOVERY_LEASE_SECONDS` | 180 | lease exclusivo entre pollers |
 | `DISCOVERY_WINDOW_SECONDS` | 60 | tamanho inicial de cada janela |

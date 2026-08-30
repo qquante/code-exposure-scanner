@@ -34,7 +34,7 @@ from .history_scan import (
 from .ingest import build_ingest_adapter, read_verified_text
 from .postgres import PostgresStore
 from .patterns import PATTERN_SET_ID
-from .scan_policy import filter_crypto_wallet_findings, is_dependency_path
+from .scan_policy import filter_automatic_findings, is_dependency_path
 from .validate import validate as validate_finding
 
 
@@ -156,7 +156,7 @@ def _persist_findings(
     event_bus: RedisStreamBus | None = None,
 ) -> int:
     created = 0
-    scoped_findings = filter_crypto_wallet_findings(dedupe(findings))
+    scoped_findings = filter_automatic_findings(dedupe(findings))
     scoped_ids = {id(finding) for finding in scoped_findings}
     for finding in findings:
         if id(finding) not in scoped_ids:
@@ -318,7 +318,7 @@ def _handle_blob(
         client.close()
     if text is None:
         raise RuntimeError("blob indisponível ou acima do limite")
-    findings = filter_crypto_wallet_findings(
+    findings = filter_automatic_findings(
         extract_from_text(text, repo=repo, path=path, source="code")
     )
     for finding in findings:
@@ -348,7 +348,7 @@ def _handle_history(
     mode = str(payload.get("mode") or "history")
     if mode == "head":
         result = HeadGitScanner(cfg).scan_repo(url)
-        findings = filter_crypto_wallet_findings(result.findings)
+        findings = filter_automatic_findings(result.findings)
         expand_history = cfg.scan_history
         repository_ref = hashlib.sha256(repo.encode("utf-8")).hexdigest()[:12]
         print(
@@ -379,7 +379,7 @@ def _handle_history(
                     "candidate_id": payload.get("candidate_id"),
                     "mode": "history",
                     "trigger": (
-                        "head_crypto_signal"
+                        "head_secret_signal"
                         if findings
                         else "automatic_eligible"
                     ),
@@ -395,7 +395,7 @@ def _handle_history(
         findings = trufflehog_scan(url, cfg)
     else:
         findings = NativeGitScanner(cfg).scan_repo(url)
-    findings = filter_crypto_wallet_findings(findings)
+    findings = filter_automatic_findings(findings)
     _persist_findings(
         store,
         cfg,

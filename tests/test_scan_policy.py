@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from secret_hunter.scan_policy import (
+    AUTOMATIC_SECRET_TYPE_IDS,
     CRYPTO_WALLET_TYPE_IDS,
     TRUFFLEHOG_EXCLUDE_GLOBS,
     filter_crypto_wallet_findings,
@@ -71,6 +72,7 @@ def test_crypto_scope_is_an_explicit_allowlist_not_a_category_match() -> None:
     ]
     assert "bitcoin_wif" not in CRYPTO_WALLET_TYPE_IDS
     assert "private_key_pem" not in CRYPTO_WALLET_TYPE_IDS
+    assert "openrouter_api_key" in AUTOMATIC_SECRET_TYPE_IDS
 
 
 def test_trufflehog_receives_equivalent_dependency_globs() -> None:

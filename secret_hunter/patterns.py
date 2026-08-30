@@ -18,6 +18,8 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 
+from .ai_detection.catalog import AI_SECRET_SPECS
+
 
 # --------------------------------------------------------------------------- #
 # Utilidades
@@ -144,13 +146,6 @@ SECRET_TYPES: list[SecretType] = [
         "Credencial temporária AWS (associada a STS/sessão).",
         "Requer o par + token de sessão.",
     ),
-    SecretType(
-        "google_api_key", "Google/Gemini API key", "Google", "cloud", "high",
-        re.compile(r"\b(AIza[0-9A-Za-z\-_]{35})\b"),
-        "Chave de API Google (Maps, Gemini, etc.). Pode gerar custo e expor dados.",
-        "Validação depende do serviço alvo; em geral 'não verificável' sem escolher a API.",
-    ),
-
     # ----------------------------- Bancos de dados ----------------------- #
     SecretType(
         "mongodb_uri", "MongoDB connection string", "MongoDB", "database", "critical",
@@ -210,24 +205,20 @@ SECRET_TYPES: list[SecretType] = [
     ),
 
     # -------------------------------- IA --------------------------------- #
-    SecretType(
-        "openai_proj", "OpenAI API key (sk-proj-)", "OpenAI", "ai", "high",
-        re.compile(r"\b(sk-proj-[A-Za-z0-9_\-]{20,})\b"),
-        "Chave de API OpenAI (projetos). Gera custo e expõe uso.",
-        "GET https://api.openai.com/v1/models com Authorization: Bearer <chave>",
-    ),
-    SecretType(
-        "openai_legacy", "OpenAI API key (sk-)", "OpenAI", "ai", "high",
-        re.compile(r"\b(sk-[A-Za-z0-9]{48})\b"),
-        "Chave de API OpenAI (formato legado).",
-        "GET https://api.openai.com/v1/models",
-    ),
-    SecretType(
-        "huggingface", "Hugging Face token (hf_)", "Hugging Face", "ai", "high",
-        re.compile(r"\b(hf_[A-Za-z0-9]{20,})\b"),
-        "Token de escrita/leitura do Hugging Face Hub.",
-        "GET https://huggingface.co/api/whoami-v2 com Authorization: Bearer <token>",
-    ),
+    *[
+        SecretType(
+            spec.type_id,
+            spec.name,
+            spec.provider,
+            "ai",
+            spec.risk,
+            re.compile(spec.pattern),
+            spec.description,
+            "Não validar automaticamente; orientar rotação pelo provedor.",
+            revision=spec.revision,
+        )
+        for spec in AI_SECRET_SPECS
+    ],
 
     # ---------------------------- Mensageria ------------------------------ #
     SecretType(

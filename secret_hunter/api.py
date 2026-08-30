@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from .config import Config
 from .event_bus import RedisStreamBus
 from .patterns import SECRET_TYPES
-from .scan_policy import CRYPTO_WALLET_TYPE_IDS
+from .scan_policy import AUTOMATIC_SECRET_TYPE_IDS
 from .patterns import PATTERN_SET_ID
 from .pipeline import schedule_ingest, schedule_repository, schedule_search
 from .postgres import PostgresStore
@@ -165,7 +165,7 @@ def detectors(_: str = Depends(_admin)) -> list[dict]:
             "validation": detector.verify_note,
         }
         for detector in SECRET_TYPES
-        if detector.type_id in CRYPTO_WALLET_TYPE_IDS
+        if detector.type_id in AUTOMATIC_SECRET_TYPE_IDS
     ]
 
 

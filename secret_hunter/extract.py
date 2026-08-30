@@ -60,7 +60,7 @@ def _match_secret(st: P.SecretType, m) -> str:
         return m.group(1)
     if st.type_id == "jwt":
         return m.group(1)
-    return m.group(1)
+    return next((group for group in m.groups() if group is not None), "")
 
 
 def _passes_filters(st: P.SecretType, secret: str) -> bool:
@@ -71,6 +71,8 @@ def _passes_filters(st: P.SecretType, secret: str) -> bool:
         if P.is_placeholder(secret):
             return False
         return P.shannon_entropy(secret) >= 3.5
+    if st.category == "ai" and st.type_id.endswith("_context"):
+        return not P.is_placeholder(secret) and P.shannon_entropy(secret) >= 3.2
     if st.type_id == "bitcoin_wif":
         return not P.is_placeholder(secret) and P.plausible_bitcoin_wif(secret)
     if st.type_id in {

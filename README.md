@@ -13,7 +13,7 @@ Pipeline defensivo para localizar segredos em código público do GitHub e prepa
 - PostgreSQL com jobs idempotentes, leases, heartbeat, `FOR UPDATE SKIP LOCKED`, retry com backoff e limitador de Code Search compartilhado entre containers.
 - Redis Streams autenticado e persistente para filas por estágio, eventos sanitizados e evidência bruta positiva/HTTP com SHA-256, sem porta publicada, TTL ou trimming automático.
 - Um draft ativo por repositório, agregando achados sem duplicar alertas.
-- O pipeline cripto interno é automático; divulgação externa continua sob aprovação humana. O notification worker prefere Private Vulnerability Reporting e nunca abre Issue pública por padrão.
+- O pipeline interno cripto + IA é automático; divulgação externa continua sob aprovação humana. O notification worker prefere Private Vulnerability Reporting e nunca abre Issue pública por padrão.
 - API administrativa autenticada que lista catálogo, achados, localizações, runs, jobs e drafts. Nenhuma resposta contém segredo bruto.
 - Drop-zone modular read-only com adapters `tree` e `manifest`, SHA-256 contra
   corrida de arquivo e workers exclusivos de ingestão.
@@ -104,17 +104,18 @@ docker compose --profile scanner --profile discovery up -d --build
 
 ```
 
-Com `DISCOVERY_AUTO_QUEUE_SCANS=true`, todos os candidatos elegíveis (100%) passa por
+Com `DISCOVERY_AUTO_QUEUE_SCANS=true`, todos os candidatos elegíveis (100%) passam por
 clone raso e limitado da árvore atual. Em paralelo, a Code Search roda a cada
-hora somente para sete contextos cripto. Antes de baixar um blob, confirma via
+hora para os detectores explicitamente escolhidos em `SEARCH_TYPES`. Antes de baixar um blob, confirma via
 metadados que o repositório foi criado nas últimas 4h. O histórico completo só é enfileirado
-quando o pré-scan encontra um tipo da allowlist explícita EVM/Solana/BIP39. Bitcoin WIF, PEM,
-outros detectores e caminhos de dependências (`node_modules`, ambientes Python, `.pnpm` e
+quando o pré-scan encontra um tipo da allowlist automática cripto/IA. Bitcoin WIF, PEM,
+outras categorias e caminhos de dependências (`node_modules`, ambientes Python, `.pnpm` e
 `.yarn`) são descartados antes da persistência. Validação ativa permanece
 desabilitada e sem wildcard em `AUTHORIZED_VALIDATION_REPOS`.
 
 O endpoint manual `POST /candidates/{id}/authorize-scan` permanece disponível apenas para reprocessamento controlado. Veja
-[docs/GLOBAL_DISCOVERY.md](docs/GLOBAL_DISCOVERY.md).
+[docs/GLOBAL_DISCOVERY.md](docs/GLOBAL_DISCOVERY.md). O catálogo de operadores e os
+limites dos detectores de IA estão em [docs/AI_TOKEN_DETECTION.md](docs/AI_TOKEN_DETECTION.md).
 
 5. Revise o detalhe privado e aprove manualmente:
 
