@@ -8,6 +8,7 @@ from secret_hunter.ai_detection.catalog import AI_SECRET_SPECS, AI_SECRET_TYPE_I
 from secret_hunter.ai_detection.scanner import extract_ai_tokens
 from secret_hunter.github_search import SEARCH_QUERIES
 from secret_hunter.scan_policy import filter_automatic_findings
+from secret_hunter.config import Config
 
 
 def _material(length: int) -> str:
@@ -117,7 +118,9 @@ def test_automatic_pipeline_accepts_crypto_and_ai_but_not_unrelated_secrets() ->
         SimpleNamespace(type_id="aws_akia", path=".env"),
     ]
 
-    filtered = filter_automatic_findings(findings)
+    filtered = filter_automatic_findings(
+        findings, Config(private_key_detection_enabled=True)
+    )
 
     assert [finding.type_id for finding in filtered] == [
         "evm_private_key",

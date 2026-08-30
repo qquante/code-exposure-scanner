@@ -13,8 +13,10 @@ x-app-environment: &app-environment
   SH_SEARCH_REQUESTS_PER_MINUTE: ${SEARCH_REQUESTS_PER_MINUTE:-8}
   SH_SEARCH_MAX_PAGES: ${SEARCH_MAX_PAGES:-1}
   SH_SEARCH_WINDOW_HOURS: ${SEARCH_WINDOW_HOURS:-1}
-  SH_SEARCH_TYPES: ${SEARCH_TYPES:-evm_private_key_to_account,evm_ethers_wallet,evm_account_from_key,evm_private_key_env,solana_from_secret_key,solana_from_seed,bip39_mnemonic_to_account,openai_proj,openai_service,anthropic_api_key,google_api_key,openrouter_api_key,groq_api_key,cerebras_api_key_context,mistral_api_key_context,deepseek_api_key_context,together_api_key_context,huggingface,replicate_api_token}
-  SH_SCAN_HISTORY: ${SCAN_HISTORY:-true}
+  SH_SEARCH_TYPES: ${SEARCH_TYPES:-deepseek_api_key_context,mistral_api_key_context,cohere_api_key_context,together_api_key_context,cerebras_api_key_context,azure_openai_api_key_context,ai21_api_key_context,voyage_api_key_context,stability_api_key_context,elevenlabs_api_key_context,assemblyai_api_key_context,pinecone_api_key_context,openai_proj,openai_service,openai_legacy,anthropic_api_key,google_api_key,openrouter_api_key,groq_api_key,huggingface,replicate_api_token,perplexity_api_key,xai_api_key,fireworks_api_key,nvidia_api_key,tavily_api_key,langsmith_api_key}
+  SH_AI_DETECTION_ENABLED: ${AI_DETECTION_ENABLED:-true}
+  SH_PRIVATE_KEY_DETECTION_ENABLED: ${PRIVATE_KEY_DETECTION_ENABLED:-false}
+  SH_SCAN_HISTORY: ${SCAN_HISTORY:-false}
   SH_ENTROPY_MIN: ${ENTROPY_MIN:-3.5}
   SH_REQUEST_TIMEOUT: ${REQUEST_TIMEOUT_SECONDS:-10}
   SH_MAX_FILE_BYTES: ${MAX_FILE_BYTES:-1000000}
@@ -520,7 +522,7 @@ services:
     <<: *app-security
 
   history-worker:
-    profiles: ["discovery"]
+    profiles: ["history"]
     build:
       context: .
     command: ["secret-hunter", "redis-worker", "--stage", "history"]

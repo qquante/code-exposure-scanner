@@ -13,15 +13,17 @@ Pipeline defensivo para localizar segredos em código público do GitHub e prepa
 - PostgreSQL com jobs idempotentes, leases, heartbeat, `FOR UPDATE SKIP LOCKED`, retry com backoff e limitador de Code Search compartilhado entre containers.
 - Redis Streams autenticado e persistente para filas por estágio, eventos sanitizados e evidência bruta positiva/HTTP com SHA-256, sem porta publicada, TTL ou trimming automático.
 - Um draft ativo por repositório, agregando achados sem duplicar alertas.
-- O pipeline interno cripto + IA é automático; divulgação externa continua sob aprovação humana. O notification worker prefere Private Vulnerability Reporting e nunca abre Issue pública por padrão.
+- O perfil padrão é IA-only: `AI_DETECTION_ENABLED=true` e `PRIVATE_KEY_DETECTION_ENABLED=false`. A segunda flag religa EVM/Solana/BIP39 sem alterar código; divulgação externa continua sob aprovação humana.
 - API administrativa autenticada que lista catálogo, achados, localizações, runs, jobs e drafts. Nenhuma resposta contém segredo bruto.
 - Drop-zone modular read-only com adapters `tree` e `manifest`, SHA-256 contra
   corrida de arquivo e workers exclusivos de ingestão.
 
 - Descoberta global via Repository Search: janelas `created:` e `pushed:` fechadas
   de 60s, divisão adaptativa sob o teto de 1.000, reconciliação e fila auditada.
-  Repos inicialmente vazios são revisitados; 4h é somente o limite de recuperação.
-  Todo candidato elegível segue por HEAD e histórico quando `SCAN_HISTORY=true`.
+  `pushed:` apenas revisita repositórios que também foram criados nas últimas 4h.
+  Jobs automáticos vencem pela data real de criação do repositório e nunca são
+  processados depois do limite. Todo candidato elegível segue por HEAD; histórico
+  completo é opt-in com `SCAN_HISTORY=true` e o perfil Docker `history`.
 
 O SQLite permanece apenas como modo local/legado de processo único. Não o use com vários workers.
 
@@ -79,6 +81,8 @@ na sessão da aba (`sessionStorage`), nunca em URL, cookie ou `localStorage`. O
 dashboard cobre visão geral, candidatos, achados, notificações, jobs, pipeline Redis, execuções
 e catálogo de detectores. Achados novos aparecem no pulso de 2 segundos em cards com o
 hint redigido, arquivo, linha e link direto ao GitHub, sem expor o segredo completo.
+A tela de achados abre em `Recentes 4h`; registros anteriores continuam preservados
+em `Arquivo`, sem misturar o backlog histórico com o fluxo live.
 A rota `/#ai-providers` agrupa as defesas por operador de IA, mostra sinais de
 detecção, quantidade de achados e oferece filtro direto para cada provedor.
 

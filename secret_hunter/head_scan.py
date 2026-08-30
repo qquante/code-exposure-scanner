@@ -11,7 +11,7 @@ from pathlib import Path
 from .config import Config
 from .evidence import maybe_evidence_store
 from .extract import Finding, extract_from_text
-from .scan_policy import is_dependency_path
+from .scan_policy import filter_automatic_findings, is_dependency_path
 from .history_scan import normalize_github_repo
 
 
@@ -153,12 +153,15 @@ class HeadGitScanner:
             if b"\0" in raw[:8192]:
                 continue
             text = raw.decode("utf-8", errors="replace")
-            file_findings = extract_from_text(
-                text,
-                repo=repo,
-                path=relative,
-                commit=commit,
-                source="head",
+            file_findings = filter_automatic_findings(
+                extract_from_text(
+                    text,
+                    repo=repo,
+                    path=relative,
+                    commit=commit,
+                    source="head",
+                ),
+                self.cfg,
             )
             findings.extend(file_findings)
             if file_findings and evidence is not None:

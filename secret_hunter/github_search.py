@@ -53,6 +53,30 @@ SEARCH_QUERIES: dict[str, str] = {
     **AI_SEARCH_QUERIES,
 }
 
+PRIVATE_KEY_SEARCH_TYPE_IDS = frozenset(
+    {
+        "private_key_pem",
+        "evm_private_key_to_account",
+        "evm_ethers_wallet",
+        "evm_account_from_key",
+        "evm_private_key_env",
+        "solana_from_secret_key",
+        "solana_from_seed",
+        "bip39_mnemonic_to_account",
+    }
+)
+
+
+def enabled_search_type_ids(cfg: Config) -> tuple[str, ...]:
+    """Filtra as queries para IA e, opcionalmente, private keys."""
+    enabled: set[str] = set()
+    if cfg.ai_detection_enabled:
+        enabled.update(AI_SEARCH_QUERIES)
+    if cfg.private_key_detection_enabled:
+        enabled.update(PRIVATE_KEY_SEARCH_TYPE_IDS)
+    requested = cfg.search_types or tuple(SEARCH_QUERIES)
+    return tuple(type_id for type_id in requested if type_id in enabled)
+
 
 class GitHubError(Exception):
     pass

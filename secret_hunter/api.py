@@ -15,7 +15,7 @@ from .ai_detection.catalog import AI_SECRET_SPECS
 from .config import Config
 from .event_bus import RedisStreamBus
 from .patterns import SECRET_TYPES
-from .scan_policy import AUTOMATIC_SECRET_TYPE_IDS
+from .scan_policy import enabled_automatic_secret_type_ids
 from .patterns import PATTERN_SET_ID
 from .pipeline import schedule_ingest, schedule_repository, schedule_search
 from .postgres import PostgresStore
@@ -108,6 +108,10 @@ def _store(request: Request) -> PostgresStore:
     return request.app.state.store
 
 
+def _cfg(request: Request) -> Config:
+    return request.app.state.cfg
+
+
 def _admin(
     request: Request,
     authorization: str | None = Header(default=None),
@@ -134,19 +138,32 @@ def health(store: PostgresStore = Depends(_store)) -> dict:
 
 @app.get("/stats")
 def stats(
-    _: str = Depends(_admin), store: PostgresStore = Depends(_store)
+    _: str = Depends(_admin),
+    store: PostgresStore = Depends(_store),
+    cfg: Config = Depends(_cfg),
 ) -> dict:
-    return store.stats()
+    return store.stats(
+        type_ids=enabled_automatic_secret_type_ids(cfg),
+        recent_hours=cfg.discovery_max_event_age_hours,
+    )
 
 
 @app.get("/findings")
 def findings(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    view: Literal["recent", "archive", "all"] = "recent",
     _: str = Depends(_admin),
     store: PostgresStore = Depends(_store),
+    cfg: Config = Depends(_cfg),
 ) -> list[dict]:
-    return store.list_findings(limit=limit, offset=offset)
+    return store.list_findings(
+        limit=limit,
+        offset=offset,
+        type_ids=enabled_automatic_secret_type_ids(cfg),
+        view=view,
+        recent_hours=cfg.discovery_max_event_age_hours,
+    )
 
 
 @app.get("/findings/{finding_id}")
@@ -162,7 +179,10 @@ def finding_detail(
 
 
 @app.get("/detectors")
-def detectors(_: str = Depends(_admin)) -> list[dict]:
+def detectors(
+    _: str = Depends(_admin), cfg: Config = Depends(_cfg)
+) -> list[dict]:
+    enabled = enabled_automatic_secret_type_ids(cfg)
     return [
         {
             "type_id": detector.type_id,
@@ -175,17 +195,24 @@ def detectors(_: str = Depends(_admin)) -> list[dict]:
             **_AI_DETECTOR_METADATA.get(detector.type_id, {}),
         }
         for detector in SECRET_TYPES
-        if detector.type_id in AUTOMATIC_SECRET_TYPE_IDS
+        if detector.type_id in enabled
     ]
 
 
 @app.get("/notifications")
 def notifications(
     limit: int = Query(100, ge=1, le=500),
+    view: Literal["recent", "archive", "all"] = "recent",
     _: str = Depends(_admin),
     store: PostgresStore = Depends(_store),
+    cfg: Config = Depends(_cfg),
 ) -> list[dict]:
-    return store.list_notifications(limit=limit)
+    return store.list_notifications(
+        limit=limit,
+        type_ids=enabled_automatic_secret_type_ids(cfg),
+        view=view,
+        recent_hours=cfg.discovery_max_event_age_hours,
+    )
 
 
 @app.get("/notifications/{notification_id}")

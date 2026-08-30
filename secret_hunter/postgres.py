@@ -213,18 +213,19 @@ class PostgresStore:
         run_id: int | None = None,
         priority: int = 0,
         max_attempts: int = 5,
+        expires_at: datetime | None = None,
     ) -> bool:
         encoded = json.dumps(payload, ensure_ascii=False)
         with self.pool.connection() as conn:
             row = conn.execute(
                 """
                 INSERT INTO scan_jobs
-                    (run_id, kind, natural_key, payload, priority, max_attempts)
-                VALUES (%s, %s, %s, %s::jsonb, %s, %s)
+                    (run_id, kind, natural_key, payload, priority, max_attempts, expires_at)
+                VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
                 ON CONFLICT (natural_key) DO NOTHING
                 RETURNING id
                 """,
-                (run_id, kind, natural_key, encoded, priority, max_attempts),
+                (run_id, kind, natural_key, encoded, priority, max_attempts, expires_at),
             ).fetchone()
             if row and run_id:
                 conn.execute(
@@ -507,9 +508,10 @@ class PostgresStore:
                 conn.execute(
                     """
                     INSERT INTO scan_jobs
-                        (kind, natural_key, payload, priority, max_attempts)
+                        (kind, natural_key, payload, priority, max_attempts, expires_at)
                     VALUES (
-                        'enrich_repository_candidate', %s, %s::jsonb, %s, 5
+                        'enrich_repository_candidate', %s, %s::jsonb, %s, 5,
+                        %s::timestamptz + (%s * interval '1 hour')
                     )
                     ON CONFLICT (natural_key) DO NOTHING
                     """,
@@ -520,11 +522,14 @@ class PostgresStore:
                                 "candidate_id": candidate_id,
                                 "repository": repository,
                                 "queue_lane": queue_lane,
+                                "event_created_at": str(event["event_created_at"]),
                                 "metadata": event.get("metadata"),
                             },
                             ensure_ascii=False,
                         ),
                         _discovery_recency_priority(event.get("event_created_at")),
+                        str(event["event_created_at"]),
+                        max(self.cfg.discovery_max_event_age_hours, 1),
                     ),
                 )
                 created += 1
@@ -683,10 +688,11 @@ class PostgresStore:
     def list_jobs_after(self, job_id: int, *, limit: int = 500) -> list[dict[str, Any]]:
         """Lista o log monotônico usado pelo dispatcher Redis."""
         with self.pool.connection() as conn:
+            self._expire_stale_jobs(conn)
             rows = conn.execute(
                 """
                 SELECT id, run_id, kind, natural_key, payload, status, priority,
-                       attempts, max_attempts, available_at, lease_owner, leased_until,
+                       attempts, max_attempts, available_at, expires_at, lease_owner, leased_until,
                        last_error, created_at, updated_at, completed_at
                 FROM scan_jobs
                 WHERE id > %s
@@ -700,10 +706,11 @@ class PostgresStore:
     def list_undispatched_jobs(self, *, limit: int = 500) -> list[dict[str, Any]]:
         """Lista jobs ativos que ainda não possuem confirmação de publicação Redis."""
         with self.pool.connection() as conn:
+            self._expire_stale_jobs(conn)
             rows = conn.execute(
                 """
                 SELECT id, run_id, kind, natural_key, payload, status, priority,
-                       attempts, max_attempts, available_at, lease_owner, leased_until,
+                       attempts, max_attempts, available_at, expires_at, lease_owner, leased_until,
                        last_error, redis_dispatched_at, redis_entry_id,
                        created_at, updated_at, completed_at
                 FROM scan_jobs
@@ -748,6 +755,7 @@ class PostgresStore:
     def claim_job_by_id(self, job_id: int, worker: str) -> dict[str, Any] | None:
         """Claim idempotente do job apontado por uma mensagem Redis."""
         with self.pool.connection() as conn:
+            self._expire_stale_jobs(conn)
             row = conn.execute(
                 """
                 WITH candidate AS (
@@ -755,6 +763,7 @@ class PostgresStore:
                     FROM scan_jobs
                     WHERE id = %s
                       AND attempts < max_attempts
+                      AND (expires_at IS NULL OR expires_at > now())
                       AND (
                         (status = 'pending' AND available_at <= now())
                         OR (status = 'running' AND leased_until < now())
@@ -780,7 +789,7 @@ class PostgresStore:
             row = conn.execute(
                 """
                 SELECT id, kind, status, attempts, max_attempts, available_at,
-                       lease_owner, leased_until, completed_at
+                       expires_at, lease_owner, leased_until, completed_at
                 FROM scan_jobs
                 WHERE id = %s
                 """,
@@ -793,12 +802,14 @@ class PostgresStore:
     ) -> dict[str, Any] | None:
         allowed = list(kinds) if kinds else None
         with self.pool.connection() as conn:
+            self._expire_stale_jobs(conn)
             row = conn.execute(
                 """
                 WITH candidate AS (
                     SELECT id
                     FROM scan_jobs
                     WHERE attempts < max_attempts
+                      AND (expires_at IS NULL OR expires_at > now())
                       AND (%s::text[] IS NULL OR kind = ANY(%s::text[]))
                       AND (
                         (status = 'pending' AND available_at <= now())
@@ -913,6 +924,84 @@ class PostgresStore:
                 ("partial" if int(counts["failed"]) else "completed", counts["failed"], run_id),
             )
 
+    def _expire_stale_jobs(self, conn) -> int:
+        """Finaliza backlog automático fora da janela sem apagar sua evidência."""
+        lock = conn.execute(
+            "SELECT pg_try_advisory_xact_lock(72104931) AS acquired"
+        ).fetchone()
+        if not lock or not bool(lock["acquired"]):
+            return 0
+        rows = conn.execute(
+            """
+            UPDATE scan_jobs
+            SET status = 'expired', completed_at = now(), updated_at = now(),
+                lease_owner = NULL, leased_until = NULL,
+                last_error = 'expired: outside recent repository window'
+            WHERE status IN ('pending', 'running')
+              AND kind IN (
+                  'github_search', 'fetch_blob', 'scan_history',
+                  'enrich_repository_candidate'
+              )
+              AND (
+                    COALESCE(
+                        NULLIF(payload->>'repository_created_at', '')::timestamptz
+                            + (%s * interval '1 hour'),
+                        (
+                            SELECT candidate.repository_created_at
+                                + (%s * interval '1 hour')
+                            FROM discovery_candidates candidate
+                            WHERE candidate.id = NULLIF(payload->>'candidate_id', '')::bigint
+                        ),
+                        expires_at,
+                        NULLIF(payload->>'event_created_at', '')::timestamptz
+                            + (%s * interval '1 hour'),
+                        created_at + (%s * interval '1 hour')
+                    ) <= now()
+                    OR (
+                        %s = false
+                        AND kind = 'scan_history'
+                        AND payload->>'mode' = 'history'
+                    )
+                  )
+            RETURNING id, run_id
+            """,
+            (
+                max(self.cfg.discovery_max_event_age_hours, 1),
+                max(self.cfg.discovery_max_event_age_hours, 1),
+                max(self.cfg.discovery_max_event_age_hours, 1),
+                max(self.cfg.discovery_max_event_age_hours, 1),
+                bool(self.cfg.scan_history),
+            ),
+        ).fetchall()
+        run_ids = sorted({int(row["run_id"]) for row in rows if row["run_id"]})
+        if run_ids:
+            conn.execute(
+                """
+                UPDATE scan_runs AS run
+                SET status = CASE
+                        WHEN EXISTS (
+                            SELECT 1 FROM scan_jobs failed
+                            WHERE failed.run_id = run.id AND failed.status = 'failed'
+                        ) THEN 'partial'
+                        ELSE 'completed'
+                    END,
+                    errors = (
+                        SELECT count(*)::int FROM scan_jobs failed
+                        WHERE failed.run_id = run.id AND failed.status = 'failed'
+                    ),
+                    finished_at = now()
+                WHERE run.id = ANY(%s::bigint[])
+                  AND run.status = 'running'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM scan_jobs active
+                      WHERE active.run_id = run.id
+                        AND active.status IN ('pending', 'running')
+                  )
+                """,
+                (run_ids,),
+            )
+        return len(rows)
+
     def reserve_rate_slot(self, bucket: str, limit: int, window_seconds: int) -> float:
         now = datetime.now(timezone.utc)
         with self.pool.connection() as conn:
@@ -943,7 +1032,13 @@ class PostgresStore:
                 return 0.0
             return max((window_end - now).total_seconds(), 0.1)
 
-    def upsert_finding(self, finding: Finding, *, run_id: int | None = None) -> tuple[int, bool]:
+    def upsert_finding(
+        self,
+        finding: Finding,
+        *,
+        run_id: int | None = None,
+        repository_created_at: str | datetime | None = None,
+    ) -> tuple[int, bool]:
         repo_name = normalize_github_repo(finding.repo)
         if not repo_name or not finding.secret_raw:
             raise ValueError("finding sem repositório canônico ou sem material transitório")
@@ -960,12 +1055,24 @@ class PostgresStore:
         with self.pool.connection() as conn:
             repo = conn.execute(
                 """
-                INSERT INTO repositories (owner, name, full_name, html_url)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (full_name) DO UPDATE SET last_seen = now()
+                INSERT INTO repositories
+                    (owner, name, full_name, html_url, github_created_at)
+                VALUES (%s, %s, %s, %s, %s::timestamptz)
+                ON CONFLICT (full_name) DO UPDATE SET
+                    last_seen = now(),
+                    github_created_at = COALESCE(
+                        EXCLUDED.github_created_at,
+                        repositories.github_created_at
+                    )
                 RETURNING id
                 """,
-                (owner, name, repo_name, f"https://github.com/{repo_name}"),
+                (
+                    owner,
+                    name,
+                    repo_name,
+                    f"https://github.com/{repo_name}",
+                    repository_created_at,
+                ),
             ).fetchone()
             finding_row = conn.execute(
                 """
@@ -1084,13 +1191,25 @@ class PostgresStore:
                 )
             return finding_id, bool(finding_row["inserted"] and location)
 
-    def list_findings(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+    def list_findings(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        type_ids: set[str] | frozenset[str] | None = None,
+        view: str = "all",
+        recent_hours: int = 4,
+    ) -> list[dict[str, Any]]:
+        if view not in {"recent", "archive", "all"}:
+            raise ValueError("visão de achados inválida")
+        types = sorted(type_ids) if type_ids is not None else None
         with self.pool.connection() as conn:
             rows = conn.execute(
                 f"""
                 SELECT f.id, r.full_name AS repository, f.type_id, f.platform, f.category,
                        f.environment, f.risk, f.confidence, f.secret_hint,
                        f.validation_status, f.status, f.first_seen, f.last_seen,
+                       r.github_created_at AS repository_created_at,
                        (SELECT count(*)::int FROM finding_locations counted
                         WHERE counted.finding_id = f.id) AS location_count,
                        latest.path AS latest_path,
@@ -1106,10 +1225,29 @@ class PostgresStore:
                     ORDER BY last_seen DESC, id DESC
                     LIMIT 1
                 ) latest ON true
+                WHERE (%s::text[] IS NULL OR f.type_id = ANY(%s::text[]))
+                  AND (
+                    %s = 'all'
+                    OR (%s = 'recent' AND r.github_created_at >= now() - (%s * interval '1 hour'))
+                    OR (%s = 'archive' AND (
+                        r.github_created_at IS NULL
+                        OR r.github_created_at < now() - (%s * interval '1 hour')
+                    ))
+                  )
                 ORDER BY {_RISK_SQL} DESC, f.last_seen DESC, f.id DESC
                 LIMIT %s OFFSET %s
                 """,
-                (min(max(limit, 1), 500), max(offset, 0)),
+                (
+                    types,
+                    types,
+                    view,
+                    view,
+                    max(int(recent_hours), 1),
+                    view,
+                    max(int(recent_hours), 1),
+                    min(max(limit, 1), 500),
+                    max(offset, 0),
+                ),
             ).fetchall()
             return [dict(row) for row in rows]
 
@@ -1118,7 +1256,8 @@ class PostgresStore:
             row = conn.execute(
                 """
                 SELECT f.*, r.host, r.owner, r.name, r.full_name AS repository,
-                       r.html_url AS repository_url, r.is_public
+                       r.html_url AS repository_url, r.is_public,
+                       r.github_created_at AS repository_created_at
                 FROM findings f
                 JOIN repositories r ON r.id = f.repository_id
                 WHERE f.id = %s
@@ -1249,10 +1388,16 @@ class PostgresStore:
                 conn.execute(
                     """
                     UPDATE repositories
-                    SET is_public = %s, last_seen = now()
+                    SET is_public = %s,
+                        github_created_at = COALESCE(%s::timestamptz, github_created_at),
+                        last_seen = now()
                     WHERE id = %s
                     """,
-                    (bool(metadata.get("is_public")), row["repository_id"]),
+                    (
+                        bool(metadata.get("is_public")),
+                        metadata.get("created_at"),
+                        row["repository_id"],
+                    ),
                 )
             return row is not None
 
@@ -1323,7 +1468,10 @@ class PostgresStore:
         with self.pool.connection() as conn:
             candidate = conn.execute(
                 """
-                SELECT c.id, c.github_event_id, c.event_created_at, r.full_name AS repository
+                SELECT c.id, c.github_event_id, c.event_created_at,
+                       COALESCE(c.repository_created_at, c.event_created_at)
+                           AS repository_created_at,
+                       r.full_name AS repository
                 FROM discovery_candidates c
                 JOIN repositories r ON r.id = c.repository_id
                 WHERE c.id = %s AND c.status = 'pending_review'
@@ -1365,6 +1513,7 @@ class PostgresStore:
                 "candidate_id": candidate_id,
                 "mode": "head" if head_first else "history",
                 "event_created_at": candidate["event_created_at"].isoformat(),
+                "repository_created_at": candidate["repository_created_at"].isoformat(),
             }
             if head_first:
                 scan_payload["history_natural_key"] = history_natural_key
@@ -1372,8 +1521,11 @@ class PostgresStore:
             job = conn.execute(
                 """
                 INSERT INTO scan_jobs
-                    (run_id, kind, natural_key, payload, priority, max_attempts)
-                VALUES (%s, 'scan_history', %s, %s::jsonb, %s, 3)
+                    (run_id, kind, natural_key, payload, priority, max_attempts, expires_at)
+                VALUES (
+                    %s, 'scan_history', %s, %s::jsonb, %s, 3,
+                    %s::timestamptz + (%s * interval '1 hour')
+                )
                 ON CONFLICT (natural_key) DO NOTHING
                 RETURNING id
                 """,
@@ -1382,6 +1534,8 @@ class PostgresStore:
                     natural_key,
                     json.dumps(scan_payload, ensure_ascii=False),
                     _discovery_recency_priority(candidate["event_created_at"]),
+                    candidate["repository_created_at"],
+                    max(self.cfg.discovery_max_event_age_hours, 1),
                 ),
             ).fetchone()
             created = job is not None
@@ -1472,7 +1626,17 @@ class PostgresStore:
                 )
             return row is not None
 
-    def list_notifications(self, *, limit: int = 100) -> list[dict[str, Any]]:
+    def list_notifications(
+        self,
+        *,
+        limit: int = 100,
+        type_ids: set[str] | frozenset[str] | None = None,
+        view: str = "all",
+        recent_hours: int = 4,
+    ) -> list[dict[str, Any]]:
+        if view not in {"recent", "archive", "all"}:
+            raise ValueError("visão de notificações inválida")
+        types = sorted(type_ids) if type_ids is not None else None
         with self.pool.connection() as conn:
             rows = conn.execute(
                 """
@@ -1481,10 +1645,35 @@ class PostgresStore:
                        n.last_error, n.created_at, n.updated_at
                 FROM notification_outbox n
                 JOIN repositories r ON r.id = n.repository_id
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM notification_findings nf
+                    JOIN findings f ON f.id = nf.finding_id
+                    JOIN repositories finding_repo ON finding_repo.id = f.repository_id
+                    WHERE nf.notification_id = n.id
+                      AND (%s::text[] IS NULL OR f.type_id = ANY(%s::text[]))
+                      AND (
+                        %s = 'all'
+                        OR (%s = 'recent' AND finding_repo.github_created_at >= now() - (%s * interval '1 hour'))
+                        OR (%s = 'archive' AND (
+                            finding_repo.github_created_at IS NULL
+                            OR finding_repo.github_created_at < now() - (%s * interval '1 hour')
+                        ))
+                      )
+                )
                 ORDER BY n.created_at DESC, n.id DESC
                 LIMIT %s
                 """,
-                (min(max(limit, 1), 500),),
+                (
+                    types,
+                    types,
+                    view,
+                    view,
+                    max(int(recent_hours), 1),
+                    view,
+                    max(int(recent_hours), 1),
+                    min(max(limit, 1), 500),
+                ),
             ).fetchall()
             return [dict(row) for row in rows]
 
@@ -1520,10 +1709,11 @@ class PostgresStore:
 
     def list_jobs(self, *, limit: int = 100) -> list[dict[str, Any]]:
         with self.pool.connection() as conn:
+            self._expire_stale_jobs(conn)
             rows = conn.execute(
                 """
                 SELECT id, run_id, kind, natural_key, payload, status, priority,
-                       attempts, max_attempts, available_at, lease_owner, leased_until,
+                       attempts, max_attempts, available_at, expires_at, lease_owner, leased_until,
                        last_error, created_at, updated_at, completed_at
                 FROM scan_jobs
                 ORDER BY created_at DESC, id DESC
@@ -1595,12 +1785,25 @@ class PostgresStore:
             ).fetchall()
             return [dict(row) for row in rows]
 
-    def stats(self) -> dict[str, int]:
+    def stats(
+        self,
+        *,
+        type_ids: set[str] | frozenset[str] | None = None,
+        recent_hours: int | None = None,
+    ) -> dict[str, int]:
+        types = sorted(type_ids) if type_ids is not None else None
+        hours = max(int(recent_hours or 0), 0)
         with self.pool.connection() as conn:
+            self._expire_stale_jobs(conn)
             row = conn.execute(
                 """
                 SELECT
-                    (SELECT count(*) FROM findings WHERE status = 'open')::int AS open_findings,
+                    (SELECT count(*) FROM findings f
+                     JOIN repositories r ON r.id = f.repository_id
+                     WHERE f.status = 'open'
+                       AND (%s::text[] IS NULL OR f.type_id = ANY(%s::text[]))
+                       AND (%s = 0 OR r.github_created_at >= now() - (%s * interval '1 hour'))
+                    )::int AS open_findings,
                     (SELECT count(*) FROM scan_jobs
                      WHERE status = 'pending')::int AS pending_jobs,
                     (SELECT count(*) FROM scan_jobs WHERE status = 'running')::int AS running_jobs,
@@ -1612,13 +1815,23 @@ class PostgresStore:
                      WHERE status = 'pending'
                        AND updated_at < now() - interval '5 minutes')::int
                         AS stale_pending_jobs,
-                    (SELECT count(*) FROM notification_outbox WHERE status = 'pending_review')::int
+                    (SELECT count(*) FROM notification_outbox n
+                     WHERE status = 'pending_review'
+                       AND EXISTS (
+                           SELECT 1 FROM notification_findings nf
+                           JOIN findings f ON f.id = nf.finding_id
+                           JOIN repositories r ON r.id = f.repository_id
+                           WHERE nf.notification_id = n.id
+                             AND (%s::text[] IS NULL OR f.type_id = ANY(%s::text[]))
+                             AND (%s = 0 OR r.github_created_at >= now() - (%s * interval '1 hour'))
+                       ))::int
                         AS pending_reviews,
                     (SELECT count(*) FROM discovery_candidates WHERE status = 'pending_metadata')::int
                         AS pending_candidate_metadata,
                     (SELECT count(*) FROM discovery_candidates WHERE status = 'pending_review')::int
                         AS pending_candidate_reviews
-                """
+                """,
+                (types, types, hours, hours, types, types, hours, hours),
             ).fetchone()
             return dict(row)
 

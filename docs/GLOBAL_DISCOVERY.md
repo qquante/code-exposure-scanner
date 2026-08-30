@@ -8,9 +8,11 @@ artificialmente um lote.
 
 Com `DISCOVERY_AUTO_QUEUE_SCANS=true` e `DISCOVERY_HEAD_SCAN_SAMPLE_PERCENT=100`, todos os
 candidatos elegíveis seguem para pré-scan raso. Em paralelo, a Code Search consulta
-os tipos explicitamente selecionados em `SEARCH_TYPES`. Com `SCAN_HISTORY=true`, todo
-candidato elegível segue para histórico completo em workers independentes. Bitcoin
-WIF, PEM genérico e categorias fora da allowlist cripto/IA não são persistidos. Dependências e metadados gerados como
+os tipos explicitamente selecionados em `SEARCH_TYPES`. O perfil padrão detecta apenas
+credenciais de IA. Chaves privadas EVM/Solana/BIP39 exigem
+`PRIVATE_KEY_DETECTION_ENABLED=true`. Histórico completo exige tanto
+`SCAN_HISTORY=true` quanto o perfil Docker `history`; ambos ficam desligados por padrão.
+Categorias fora do perfil ativo não são persistidas. Dependências e metadados gerados como
 `node_modules`, `.venv`, `site-packages`, `.pnpm`, `.yarn` e `Cargo.lock` são excluídos antes da leitura.
 A validação ativa de credenciais continua separada, desabilitada por padrão e
 condicionada à allowlist explícita.
@@ -45,7 +47,7 @@ relógio UTC
   -> metadata/head live e backfill consomem Redis Streams separados
   -> pré-scan do HEAD: clone raso, até 2.000 arquivos / 20 MB / 120s
   -> finding do HEAD é persistido imediatamente, se existir
-  -> history-worker recebe scan completo para todo elegível (`SCAN_HISTORY=true`)
+  -> opcional: history-worker recebe scan completo (`SCAN_HISTORY=true` + perfil `history`)
   -> dependências vendorizadas e tipos fora da allowlist são descartados
   -> finding redigido e evento sanitizado
   -> draft pending_review
@@ -55,8 +57,8 @@ relógio UTC
 A lane é gravada no payload dentro da mesma transação que cria candidato e job.
 Por isso, um backlog antigo nunca fica na frente de um repositório live. Jobs
 criados antes desta mudança, sem `queue_lane`, continuam nos streams legados até
-serem drenados. O histórico possui stream e quatro workers próprios: ele não
-bloqueia descoberta, metadados ou HEAD.
+serem drenados. O histórico possui stream e quatro workers próprios, isolados no
+perfil Docker `history`: ele não bloqueia descoberta, metadados ou HEAD.
 
 
 Janelas recentes são consultadas novamente após 15 minutos para compensar atraso

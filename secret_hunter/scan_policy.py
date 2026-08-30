@@ -12,6 +12,7 @@ from collections.abc import Iterable
 from typing import TypeVar
 
 from .ai_detection.catalog import AI_SECRET_TYPE_IDS
+from .config import Config
 
 
 CRYPTO_WALLET_TYPE_IDS = frozenset(
@@ -106,6 +107,16 @@ _FindingT = TypeVar("_FindingT")
 AUTOMATIC_SECRET_TYPE_IDS = CRYPTO_WALLET_TYPE_IDS | AI_SECRET_TYPE_IDS
 
 
+def enabled_automatic_secret_type_ids(cfg: Config) -> frozenset[str]:
+    """Retorna o escopo efetivamente ligado pelas duas flags operacionais."""
+    enabled: set[str] = set()
+    if cfg.ai_detection_enabled:
+        enabled.update(AI_SECRET_TYPE_IDS)
+    if cfg.private_key_detection_enabled:
+        enabled.update(CRYPTO_WALLET_TYPE_IDS)
+    return frozenset(enabled)
+
+
 def filter_crypto_wallet_findings(findings: Iterable[_FindingT]) -> list[_FindingT]:
     """Mantém somente os detectores de carteira, para compatibilidade e testes."""
     return [
@@ -116,11 +127,14 @@ def filter_crypto_wallet_findings(findings: Iterable[_FindingT]) -> list[_Findin
     ]
 
 
-def filter_automatic_findings(findings: Iterable[_FindingT]) -> list[_FindingT]:
-    """Mantém os detectores aprovados no pipeline automático cripto + IA."""
+def filter_automatic_findings(
+    findings: Iterable[_FindingT], cfg: Config | None = None
+) -> list[_FindingT]:
+    """Mantém somente os detectores ligados no perfil operacional atual."""
+    enabled = enabled_automatic_secret_type_ids(cfg or Config())
     return [
         finding
         for finding in findings
-        if getattr(finding, "type_id", "") in AUTOMATIC_SECRET_TYPE_IDS
+        if getattr(finding, "type_id", "") in enabled
         and not is_dependency_path(str(getattr(finding, "path", "")))
     ]

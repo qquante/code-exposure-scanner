@@ -57,12 +57,12 @@ banco. Redis não decide se um job está concluído.
 | `<prefix>:jobs:metadata-live` | `<prefix>:workers:metadata-live` | enriquecimento de repositórios com até 20 minutos |
 | `<prefix>:jobs:metadata-backfill` | `<prefix>:workers:metadata-backfill` | recuperação entre 20 minutos e 4 horas |
 | `<prefix>:jobs:metadata` | `<prefix>:workers:metadata` | compatibilidade: drena jobs anteriores às lanes |
-| `<prefix>:jobs:search` | `<prefix>:workers:search` | Code Search cripto |
+| `<prefix>:jobs:search` | `<prefix>:workers:search` | Code Search do perfil ativo (IA por padrão) |
 | `<prefix>:jobs:blob` | `<prefix>:workers:blob` | fetch imutável por SHA |
 | `<prefix>:jobs:head-live` | `<prefix>:workers:head-live` | pré-scan raso prioritário do HEAD |
 | `<prefix>:jobs:head-backfill` | `<prefix>:workers:head-backfill` | pré-scan raso de recuperação |
 | `<prefix>:jobs:head` | `<prefix>:workers:head` | compatibilidade: drena jobs anteriores às lanes |
-| `<prefix>:jobs:history` | `<prefix>:workers:history` | histórico de todo candidato elegível quando `SCAN_HISTORY=true` |
+| `<prefix>:jobs:history` | `<prefix>:workers:history` | histórico opcional (`SCAN_HISTORY=true` + perfil Docker `history`) |
 | `<prefix>:jobs:ingest` | `<prefix>:workers:ingest` | drop-zone local |
 | `<prefix>:events` | `<prefix>:indexer` | eventos operacionais sanitizados |
 | `<prefix>:dead-letter` | operador | mensagens inválidas ou sem rota |

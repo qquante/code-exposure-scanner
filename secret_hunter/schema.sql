@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS repositories (
     full_name TEXT NOT NULL UNIQUE,
     html_url TEXT NOT NULL,
     is_public BOOLEAN NOT NULL DEFAULT TRUE,
+    github_created_at TIMESTAMPTZ,
     first_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -33,11 +34,12 @@ CREATE TABLE IF NOT EXISTS scan_jobs (
     natural_key TEXT NOT NULL UNIQUE,
     payload JSONB NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+        CHECK (status IN ('pending', 'running', 'completed', 'failed', 'expired')),
     priority SMALLINT NOT NULL DEFAULT 0,
     attempts SMALLINT NOT NULL DEFAULT 0,
     max_attempts SMALLINT NOT NULL DEFAULT 5,
     available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ,
     lease_owner TEXT,
     leased_until TIMESTAMPTZ,
     last_error TEXT NOT NULL DEFAULT '',
@@ -259,6 +261,33 @@ ALTER TABLE scan_jobs
     ADD COLUMN IF NOT EXISTS redis_dispatched_at TIMESTAMPTZ;
 ALTER TABLE scan_jobs
     ADD COLUMN IF NOT EXISTS redis_entry_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE scan_jobs
+    ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+
+ALTER TABLE repositories
+    ADD COLUMN IF NOT EXISTS github_created_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_repositories_github_created_at
+    ON repositories (github_created_at);
+
+UPDATE repositories AS repository
+SET github_created_at = candidate.repository_created_at
+FROM (
+    SELECT DISTINCT ON (repository_id) repository_id, repository_created_at
+    FROM discovery_candidates
+    WHERE repository_created_at IS NOT NULL
+    ORDER BY repository_id, metadata_checked_at DESC NULLS LAST, id DESC
+) AS candidate
+WHERE repository.id = candidate.repository_id
+  AND repository.github_created_at IS NULL;
+
+ALTER TABLE scan_jobs DROP CONSTRAINT IF EXISTS scan_jobs_status_check;
+ALTER TABLE scan_jobs ADD CONSTRAINT scan_jobs_status_check
+    CHECK (status IN ('pending', 'running', 'completed', 'failed', 'expired'));
+
+CREATE INDEX IF NOT EXISTS idx_scan_jobs_expiry
+    ON scan_jobs (expires_at)
+    WHERE status IN ('pending', 'running');
 
 ALTER TABLE finding_locations
     DROP CONSTRAINT IF EXISTS finding_locations_source_kind_check;

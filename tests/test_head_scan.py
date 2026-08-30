@@ -32,6 +32,7 @@ def test_head_tree_scan_prioritizes_sensitive_files_and_respects_limits(tmp_path
     cfg = Config(
         discovery_head_scan_max_files=1,
         discovery_head_scan_max_total_bytes=1024,
+        private_key_detection_enabled=True,
     )
 
     result = HeadGitScanner(cfg).scan_tree(
@@ -82,7 +83,9 @@ def test_head_scan_persists_only_matching_raw_file_as_redis_evidence(
     (tmp_path / ".env").write_bytes(raw)
     (tmp_path / "README.md").write_text("clean", encoding="utf-8")
 
-    result = HeadGitScanner(Config(evidence_enabled=True)).scan_tree(
+    result = HeadGitScanner(
+        Config(evidence_enabled=True, private_key_detection_enabled=True)
+    ).scan_tree(
         tmp_path, repo="acme/demo", commit="abc123"
     )
 
@@ -100,6 +103,32 @@ def test_head_scan_persists_only_matching_raw_file_as_redis_evidence(
         )
     ]
     assert evidence.closed is True
+
+
+def test_head_scan_does_not_persist_private_key_evidence_when_toggle_is_off(
+    monkeypatch, tmp_path
+) -> None:
+    class _Evidence:
+        def __init__(self) -> None:
+            self.items: list[tuple[str, bytes, dict]] = []
+
+        def append_bytes(self, source, payload, *, metadata=None):
+            self.items.append((source, payload, dict(metadata or {})))
+
+        def close(self):
+            pass
+
+    evidence = _Evidence()
+    monkeypatch.setattr(head_scan, "maybe_evidence_store", lambda _cfg: evidence)
+    raw = hashlib.sha256(b"private-toggle-off-fixture").hexdigest()
+    (tmp_path / ".env").write_text(f"PRIVATE_KEY=0x{raw}", encoding="utf-8")
+
+    result = HeadGitScanner(Config(evidence_enabled=True)).scan_tree(
+        tmp_path, repo="acme/demo"
+    )
+
+    assert result.findings == ()
+    assert evidence.items == []
 
 class _Store:
     def __init__(self) -> None:
@@ -161,7 +190,11 @@ def test_head_scan_log_hides_repository_name(monkeypatch, capsys) -> None:
 
 
 def test_head_scan_queues_history_only_for_crypto_signal(monkeypatch) -> None:
-    store = _run_head_job(monkeypatch, (_finding("crypto"),))
+    store = _run_head_job(
+        monkeypatch,
+        (_finding("crypto"),),
+        cfg=Config(scan_history=True, private_key_detection_enabled=True),
+    )
 
     assert len(store.enqueued) == 1
     assert store.enqueued[0]["kind"] == "scan_history"
@@ -172,13 +205,11 @@ def test_head_scan_queues_history_only_for_crypto_signal(monkeypatch) -> None:
 def test_head_scan_queues_history_even_without_head_signal_when_enabled(
     monkeypatch,
 ) -> None:
-    store = _run_head_job(monkeypatch, ())
+    store = _run_head_job(monkeypatch, (), cfg=Config(scan_history=True))
 
     assert len(store.enqueued) == 1
     assert store.enqueued[0]["payload"]["trigger"] == "automatic_eligible"
 
 
 def test_head_scan_does_not_expand_history_when_disabled(monkeypatch) -> None:
-    assert _run_head_job(
-        monkeypatch, (), cfg=Config(scan_history=False)
-    ).enqueued == []
+    assert _run_head_job(monkeypatch, ()).enqueued == []

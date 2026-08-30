@@ -52,15 +52,29 @@ Repository Search (janelas recentes, novo primeiro)
   -> filtros de metadados
   -> Redis head-live/backfill
   -> clone raso e priorização de .env/key/token/auth/provider
-  -> extrator cripto + IA
+  -> extrator IA (private keys somente quando a flag estiver ligada)
   -> exclusão de node_modules, lockfiles e dependências vendorizadas
   -> filtro de placeholder/entropia e deduplicação
   -> HMAC/fingerprint + hint redigido no PostgreSQL
   -> evidência bruta opcional no Redis autenticado
   -> dashboard em até o próximo pulso
-  -> history-worker independente
   -> draft privado sujeito a aprovação humana
 ```
+
+O perfil operacional atual usa:
+
+```dotenv
+AI_DETECTION_ENABLED=true
+PRIVATE_KEY_DETECTION_ENABLED=false
+SCAN_HISTORY=false
+```
+
+Trocar `PRIVATE_KEY_DETECTION_ENABLED` para `true` religa EVM, Solana e BIP39.
+Não há terceira configuração nem alteração de código. Jobs fora de
+`DISCOVERY_MAX_EVENT_AGE_HOURS` recebem estado `expired`; achados já persistidos
+continuam no `Arquivo` para preservar a prova acadêmica. A janela usa
+`created_at` do próprio repositório no GitHub, não o horário em que o achado foi
+gravado localmente.
 
 O GitHub Code Search é um caminho complementar e limitado por quota. Ele só usa
 os IDs de `SEARCH_TYPES` dentro de `SEARCH_SCOPE`; busca global não é necessária

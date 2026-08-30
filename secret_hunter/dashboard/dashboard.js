@@ -25,6 +25,7 @@
     timer: null,
     liveTimer: null,
     activeView: "overview",
+    findingWindow: "recent",
     lastFocused: null,
   };
 
@@ -48,6 +49,7 @@
     running: "Executando",
     completed: "Concluído",
     failed: "Falhou",
+    expired: "Expirado",
     approved: "Aprovado",
     sending: "Enviando",
     sent: "Enviado",
@@ -223,8 +225,8 @@
       const [stats, candidates, findings, notifications, jobs, runs, detectors, events, streams] = await Promise.all([
         api("/stats"),
         api("/candidates?limit=500"),
-        api("/findings?limit=500"),
-        api("/notifications?limit=500"),
+        api(`/findings?view=${state.findingWindow}&limit=500`),
+        api("/notifications?view=recent&limit=500"),
         api("/jobs?limit=500"),
         api("/runs?limit=500"),
         api("/detectors"),
@@ -250,7 +252,7 @@
     try {
       const [stats, findings, events, streams] = await Promise.all([
         api("/stats"),
-        api("/findings?limit=500"),
+        api(`/findings?view=${state.findingWindow}&limit=500`),
         api("/events?limit=500"),
         api("/streams"),
       ]);
@@ -873,6 +875,22 @@
       state.filters[group.dataset.filterGroup] = button.dataset.filter;
       ({ candidates: renderCandidates, findings: renderFindings, notifications: renderNotifications, jobs: renderJobs, detectors: renderDetectors, aiProviders: renderAiProviders })[group.dataset.filterGroup]?.();
     }));
+
+    $('[data-finding-window-group]').addEventListener("click", async (event) => {
+      const button = event.target.closest("button[data-window]");
+      if (!button || button.dataset.window === state.findingWindow) return;
+      state.findingWindow = button.dataset.window;
+      $$('[data-finding-window-group] button').forEach((item) => {
+        item.classList.toggle("active", item === button);
+      });
+      try {
+        state.findings = await api(`/findings?view=${state.findingWindow}&limit=500`);
+        renderFindings();
+        renderAiProviders();
+      } catch (error) {
+        toast("Falha ao trocar a janela", error.message, "error");
+      }
+    });
     $("#candidate-search").addEventListener("input", renderCandidates);
     $("#finding-search").addEventListener("input", renderFindings);
     $("#detector-search").addEventListener("input", renderDetectors);

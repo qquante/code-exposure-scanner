@@ -110,9 +110,10 @@ ALLOW_PUBLIC_CONTACT_ISSUE=false
 ```
 
 `SEARCH_TYPES` controla apenas a busca complementar do GitHub Code Search e deve
-permanecer limitada por `SEARCH_SCOPE`. A descoberta de repositórios recentes já
-envia o HEAD e o histórico elegíveis ao extrator completo cripto + IA, sem depender
-dessa lista. Detectar não significa validar: nenhuma chave de IA é chamada.
+permanecer limitada por `SEARCH_SCOPE`. A descoberta de repositórios recentes envia
+o HEAD ao extrator do perfil ativo, sem depender dessa lista. O padrão é somente IA;
+chaves privadas e histórico são opções independentes. Detectar não significa validar:
+nenhuma chave de IA é chamada.
 
 Os campos `*_FILE` do `.env` sao apenas caminhos. Os valores secretos ficam em
 `.secrets/` e sao montados nos containers em `/run/secrets/...`.

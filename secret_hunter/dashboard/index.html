@@ -143,7 +143,7 @@
       <main id="main-content">
         <section class="view active" id="view-overview" data-view-panel="overview">
           <div class="page-heading">
-            <div><span class="eyebrow"><i></i> Monitoramento defensivo</span><h1>Visão operacional</h1><p>Do evento público ao achado cripto ou IA, com filas Redis independentes e rastreabilidade por estágio.</p></div>
+            <div><span class="eyebrow"><i></i> Monitoramento defensivo</span><h1>Visão operacional</h1><p>Do repositório público recém-criado ao achado de IA, com filas Redis independentes e rastreabilidade por estágio.</p></div>
             <div class="system-state"><span class="pulse-dot"></span><div><strong>Sistema operacional</strong><small id="system-state-detail">API e banco respondendo</small></div></div>
           </div>
 
@@ -164,7 +164,7 @@
               <div class="posture-score"><div class="score-ring"><span>4/4</span></div><div><strong>Fronteiras ativas</strong><p>Detecção automática; validação online e contato externo continuam restritos.</p></div></div>
               <ul class="control-list">
                 <li><span>✓</span><div><strong>Sem segredo bruto no banco</strong><small>Fingerprint HMAC e hints fixos</small></div></li>
-                <li><span>✓</span><div><strong>Scan cripto + IA automático</strong><small>100% dos candidatos elegíveis entram na fila</small></div></li>
+                <li><span>✓</span><div><strong>Scan de IA automático</strong><small>Private keys desligadas por flag; candidatos elegíveis entram na fila</small></div></li>
                 <li><span>✓</span><div><strong>Notificação com aprovação</strong><small>Canal privado priorizado</small></div></li>
                 <li><span>✓</span><div><strong>API somente local</strong><small>Bind em 127.0.0.1</small></div></li>
               </ul>
@@ -172,7 +172,7 @@
           </div>
 
           <article class="panel pipeline-panel">
-            <div class="panel-header"><div><span class="panel-kicker">PIPELINE</span><h2>Da descoberta ao alerta</h2></div><span class="muted-label">DISCOVERY → REDIS → HEAD → HISTORY → FINDING</span></div>
+            <div class="panel-header"><div><span class="panel-kicker">PIPELINE</span><h2>Da descoberta ao alerta</h2></div><span class="muted-label">DISCOVERY → REDIS → HEAD → FINDING</span></div>
             <div class="pipeline-flow">
               <div class="pipeline-step"><span>01</span><i class="step-icon">⌁</i><strong>Descoberta</strong><small>Eventos públicos</small></div><b>→</b>
               <div class="pipeline-step"><span>02</span><i class="step-icon">◇</i><strong>Redis</strong><small>Fila por estágio</small></div><b>→</b>
@@ -192,7 +192,7 @@
         <section class="view" id="view-findings" data-view-panel="findings" hidden>
           <div class="page-heading compact-heading"><div><span class="eyebrow"><i></i> Triagem segura</span><h1>Achados</h1><p>Veja o identificador redigido e abra a exposição exata no GitHub em um clique.</p></div></div>
           <div class="finding-safety-note"><strong>Chave protegida</strong><span>O painel mostra somente um hint redigido para identificação. O valor completo não é armazenado nem revelado.</span></div>
-          <div class="toolbar"><div class="filter-tabs" data-filter-group="findings"><button class="active" data-filter="all">Todos</button><button data-filter="critical">Críticos</button><button data-filter="high">Altos</button><button data-filter="open">Abertos</button><button data-filter="notified">Notificados</button></div><input class="search-input" id="finding-search" type="search" placeholder="Buscar chave, provedor, arquivo ou repo…"></div>
+          <div class="toolbar"><div class="filter-tabs" data-filter-group="findings"><button class="active" data-filter="all">Todos</button><button data-filter="critical">Críticos</button><button data-filter="high">Altos</button><button data-filter="open">Abertos</button><button data-filter="notified">Notificados</button></div><div class="filter-tabs" data-finding-window-group><button class="active" data-window="recent">Recentes 4h</button><button data-window="archive">Arquivo</button></div><input class="search-input" id="finding-search" type="search" placeholder="Buscar chave, provedor, arquivo ou repo…"></div>
           <div class="finding-grid" id="finding-grid"></div>
           <div class="empty-state standalone" id="finding-empty" hidden><span>✓</span><h3>Nenhum achado</h3><p>A fila está limpa. Isso não comprova ausência global de vazamentos.</p></div>
         </section>
@@ -205,7 +205,7 @@
 
         <section class="view" id="view-jobs" data-view-panel="jobs" hidden>
           <div class="page-heading compact-heading"><div><span class="eyebrow"><i></i> Processamento distribuído</span><h1>Fila de jobs</h1><p>Leases, tentativas e erros de cada unidade idempotente de trabalho.</p></div></div>
-          <div class="toolbar"><div class="filter-tabs" data-filter-group="jobs"><button class="active" data-filter="all">Todos</button><button data-filter="pending">Pendentes</button><button data-filter="running">Executando</button><button data-filter="failed">Falhos</button><button data-filter="completed">Concluídos</button></div></div>
+          <div class="toolbar"><div class="filter-tabs" data-filter-group="jobs"><button class="active" data-filter="all">Todos</button><button data-filter="pending">Pendentes</button><button data-filter="running">Executando</button><button data-filter="failed">Falhos</button><button data-filter="expired">Expirados</button><button data-filter="completed">Concluídos</button></div></div>
           <div class="table-panel"><div class="table-scroll"><table><thead><tr><th>ID</th><th>Tipo</th><th>Estado</th><th>Tentativas</th><th>Worker / lease</th><th>Atualizado</th><th class="align-right">Detalhes</th></tr></thead><tbody id="job-table"></tbody></table></div><div class="empty-state" id="job-empty" hidden><span>≋</span><h3>Fila vazia</h3><p>Nenhum trabalho pendente ou histórico recente disponível.</p></div></div>
         </section>
 

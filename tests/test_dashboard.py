@@ -11,6 +11,7 @@ from fastapi import Request
 from fastapi.responses import Response
 
 from secret_hunter.api import app, dashboard, detectors, security_headers
+from secret_hunter.config import Config
 
 
 DASHBOARD = Path(__file__).parents[1] / "secret_hunter" / "dashboard"
@@ -42,8 +43,8 @@ def test_dashboard_exposes_all_operational_sections_and_actions() -> None:
     ):
         assert f'data-view-panel="{section}"' in index
     for endpoint in (
-        "/stats", "/candidates?limit=500", "/findings?limit=500",
-        "/notifications?limit=500", "/jobs?limit=500", "/runs?limit=500",
+        "/stats", "/candidates?limit=500", "/findings?view=",
+        "/notifications?view=recent&limit=500", "/jobs?limit=500", "/runs?limit=500",
         "/detectors", "/events?limit=500", "/streams", "/jobs/repository",
     ):
         assert endpoint in javascript
@@ -61,10 +62,12 @@ def test_dashboard_exposes_all_operational_sections_and_actions() -> None:
     assert 'window.location.hash.slice(1) || "overview"' in javascript
     assert 'data-action="provider-findings"' in javascript
     assert "renderAiProviders" in javascript
+    assert 'data-window="recent"' in index
+    assert 'data-window="archive"' in index
 
 
 def test_ai_detector_metadata_supports_provider_dashboard() -> None:
-    catalog = detectors("test-admin")
+    catalog = detectors("test-admin", Config())
     ai = [item for item in catalog if item["category"] == "ai"]
 
     assert len(ai) >= 20

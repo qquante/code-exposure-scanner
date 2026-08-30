@@ -141,6 +141,94 @@ def test_concurrent_enqueue_is_idempotent(store: PostgresStore) -> None:
         assert conn.execute("SELECT count(*) AS n FROM scan_jobs").fetchone()["n"] == 1
 
 
+def test_automatic_jobs_outside_recent_window_expire_before_claim(
+    store: PostgresStore,
+) -> None:
+    old_event = datetime.now(timezone.utc) - timedelta(hours=5)
+    assert store.enqueue_job(
+        "scan_history",
+        "expired-recent-window",
+        {
+            "repo": "acme/demo",
+            "mode": "head",
+            "event_created_at": old_event.isoformat(),
+        },
+    )
+
+    assert store.claim_job_by_id(1, "expiry-test") is None
+    state = store.get_job_state(1)
+
+    assert state is not None
+    assert state["status"] == "expired"
+    assert state["completed_at"] is not None
+
+
+def test_recent_head_job_remains_claimable_for_full_repository_window(
+    store: PostgresStore,
+) -> None:
+    created_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    assert store.enqueue_job(
+        "scan_history",
+        "recent-head-window",
+        {
+            "repo": "acme/recent",
+            "mode": "head",
+            "event_created_at": created_at.isoformat(),
+            "repository_created_at": created_at.isoformat(),
+        },
+    )
+
+    job = store.claim_job_by_id(1, "recent-window-test")
+
+    assert job is not None
+    assert job["status"] == "running"
+
+
+def test_recent_findings_use_github_repository_creation_time(
+    store: PostgresStore,
+) -> None:
+    now = datetime.now(timezone.utc)
+    old = Finding(
+        "google_api_key", "Google Gemini", "ai", "high", "oculto",
+        repo="acme/old-repository", path=".env", secret_raw="AIza" + "A" * 35,
+    )
+    recent = Finding(
+        "google_api_key", "Google Gemini", "ai", "high", "oculto",
+        repo="acme/recent-repository", path=".env", secret_raw="AIza" + "B" * 35,
+    )
+
+    store.upsert_finding(
+        old,
+        repository_created_at=now - timedelta(days=365 * 9),
+    )
+    store.upsert_finding(
+        recent,
+        repository_created_at=now - timedelta(hours=2),
+    )
+
+    assert [item["repository"] for item in store.list_findings(view="recent")] == [
+        "acme/recent-repository"
+    ]
+    assert [item["repository"] for item in store.list_findings(view="archive")] == [
+        "acme/old-repository"
+    ]
+def test_history_jobs_expire_when_history_toggle_is_off(store: PostgresStore) -> None:
+    assert store.cfg.scan_history is False
+    assert store.enqueue_job(
+        "scan_history",
+        "history-disabled",
+        {
+            "repo": "acme/demo",
+            "mode": "history",
+            "event_created_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+    assert store.claim_job_by_id(1, "history-toggle-test") is None
+    state = store.get_job_state(1)
+    assert state is not None and state["status"] == "expired"
+
+
 def test_concurrent_file_ingest_is_idempotent_and_persists_no_raw_secret(
     store: PostgresStore, tmp_path
 ) -> None:
@@ -149,6 +237,7 @@ def test_concurrent_file_ingest_is_idempotent_and_persists_no_raw_secret(
     raw = "0x" + "1234567890abcdef" * 4
     target.write_text(f'PRIVATE_KEY="{raw}"\n', encoding="utf-8")
     store.cfg.ingest_root = tmp_path
+    store.cfg.private_key_detection_enabled = True
 
     with ThreadPoolExecutor(max_workers=8) as executor:
         scheduled = list(
@@ -391,6 +480,7 @@ def test_candidate_auto_queue_is_atomic_without_human_authorization(
     assert queued_job["payload"]["mode"] == "head"
     assert queued_job["payload"]["queue_lane"] == "live"
     assert queued_job["payload"]["event_created_at"]
+    assert queued_job["payload"]["repository_created_at"]
     assert queued_job["payload"]["history_natural_key"].startswith(
         "candidate-history:"
     )

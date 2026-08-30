@@ -79,7 +79,7 @@ def test_code_search_skips_dependencies_before_metadata_and_keeps_branch(
         {
             "id": 7,
             "kind": "github_search",
-            "payload": {"query": "fixture", "type_id": "evm_private_key_env"},
+            "payload": {"query": "fixture", "type_id": "openai_proj"},
         },
     )
 
@@ -114,7 +114,7 @@ def test_persistence_boundary_keeps_only_wallet_allowlist_and_clears_raw() -> No
         def __init__(self) -> None:
             self.types: list[str] = []
 
-        def upsert_finding(self, finding, *, run_id=None):
+        def upsert_finding(self, finding, *, run_id=None, repository_created_at=None):
             self.types.append(finding.type_id)
             return len(self.types), True
 
@@ -139,7 +139,7 @@ def test_persistence_boundary_keeps_only_wallet_allowlist_and_clears_raw() -> No
     store = _Store()
 
     created = pipeline._persist_findings(  # type: ignore[arg-type]
-        store, Config(), findings, run_id=None
+        store, Config(private_key_detection_enabled=True), findings, run_id=None
     )
 
     assert created == 1

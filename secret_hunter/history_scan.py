@@ -21,7 +21,11 @@ from . import patterns as P
 from .config import Config
 from .evidence import maybe_evidence_store
 from .extract import Finding, extract_from_text
-from .scan_policy import TRUFFLEHOG_EXCLUDE_GLOBS, is_dependency_path
+from .scan_policy import (
+    TRUFFLEHOG_EXCLUDE_GLOBS,
+    filter_automatic_findings,
+    is_dependency_path,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -153,6 +157,7 @@ def trufflehog_scan(repo_url: str, cfg: Config) -> list[Finding]:
             finding.secret_raw
             and normalize_github_repo(finding.repo)
             and not is_dependency_path(finding.path)
+            and filter_automatic_findings((finding,), cfg)
         ):
             findings.append(finding)
             if evidence is not None:
@@ -166,6 +171,8 @@ def trufflehog_scan(repo_url: str, cfg: Config) -> list[Finding]:
                         "finding_type": finding.type_id,
                     },
                 )
+        else:
+            finding.secret_raw = ""
     if evidence is not None:
         evidence.close()
 

@@ -8,9 +8,12 @@ from secret_hunter.scan_policy import (
     AUTOMATIC_SECRET_TYPE_IDS,
     CRYPTO_WALLET_TYPE_IDS,
     TRUFFLEHOG_EXCLUDE_GLOBS,
+    enabled_automatic_secret_type_ids,
+    filter_automatic_findings,
     filter_crypto_wallet_findings,
     is_dependency_path,
 )
+from secret_hunter.config import Config
 
 
 @pytest.mark.parametrize(
@@ -83,3 +86,32 @@ def test_trufflehog_receives_equivalent_dependency_globs() -> None:
     assert "**/forge-std/test/StdCheats.t.sol" in TRUFFLEHOG_EXCLUDE_GLOBS
     assert "**/btcec/**/*_test.go" in TRUFFLEHOG_EXCLUDE_GLOBS
     assert "**/waddrmgr/**/*_test.go" in TRUFFLEHOG_EXCLUDE_GLOBS
+
+
+def test_default_automatic_scope_is_ai_only() -> None:
+    findings = [
+        SimpleNamespace(type_id="openrouter_api_key", path=".env"),
+        SimpleNamespace(type_id="evm_private_key", path="wallet.ts"),
+        SimpleNamespace(type_id="aws_akia", path=".env"),
+    ]
+
+    filtered = filter_automatic_findings(findings, Config())
+
+    assert [item.type_id for item in filtered] == ["openrouter_api_key"]
+    assert "openrouter_api_key" in enabled_automatic_secret_type_ids(Config())
+    assert "evm_private_key" not in enabled_automatic_secret_type_ids(Config())
+
+
+def test_private_key_scope_is_a_single_boolean_toggle() -> None:
+    cfg = Config(private_key_detection_enabled=True)
+    findings = [
+        SimpleNamespace(type_id="openrouter_api_key", path=".env"),
+        SimpleNamespace(type_id="evm_private_key", path="wallet.ts"),
+    ]
+
+    filtered = filter_automatic_findings(findings, cfg)
+
+    assert [item.type_id for item in filtered] == [
+        "openrouter_api_key",
+        "evm_private_key",
+    ]

@@ -23,7 +23,7 @@ from .discovery import (
     RepositoryMetadata,
 )
 from .extract import Finding, dedupe, extract_from_text
-from .github_search import SEARCH_QUERIES, GitHubClient
+from .github_search import SEARCH_QUERIES, GitHubClient, enabled_search_type_ids
 from .head_scan import HeadGitScanner
 from .history_scan import (
     NativeGitScanner,
@@ -43,6 +43,18 @@ def _payload(job: dict[str, Any]) -> dict[str, Any]:
     return json.loads(value) if isinstance(value, str) else dict(value)
 
 
+def _expires_at(value: str | datetime | None, cfg: Config) -> datetime:
+    if isinstance(value, datetime):
+        created_at = value
+    elif value:
+        created_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    else:
+        created_at = datetime.now(timezone.utc)
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return created_at + timedelta(hours=max(cfg.discovery_max_event_age_hours, 1))
+
+
 def schedule_search(store: PostgresStore, cfg: Config) -> tuple[int, int]:
     """Cria uma rodada; a janela torna o enqueue idempotente entre schedulers."""
     scope = cfg.search_scope.strip()
@@ -56,12 +68,15 @@ def schedule_search(store: PostgresStore, cfg: Config) -> tuple[int, int]:
         scope,
     ):
         raise ValueError("SH_SEARCH_SCOPE deve ser exatamente org:, user: ou repo:")
-    selected_types = cfg.search_types or tuple(SEARCH_QUERIES)
-    unknown_types = tuple(item for item in selected_types if item not in SEARCH_QUERIES)
+    requested_types = cfg.search_types or tuple(SEARCH_QUERIES)
+    unknown_types = tuple(item for item in requested_types if item not in SEARCH_QUERIES)
     if unknown_types:
         raise ValueError(
             "SH_SEARCH_TYPES contém tipos desconhecidos: " + ", ".join(unknown_types)
         )
+    selected_types = enabled_search_type_ids(cfg)
+    if not selected_types:
+        raise ValueError("nenhum tipo de busca está habilitado pelas flags de detecção")
     run_scope = scope or "github.com/global-public-code"
     run_id = store.create_run("search", run_scope)
     window_seconds = max(cfg.search_window_hours, 1) * 3600
@@ -78,6 +93,7 @@ def schedule_search(store: PostgresStore, cfg: Config) -> tuple[int, int]:
                 {"type_id": type_id, "query": scoped_query, "scope": run_scope},
                 run_id=run_id,
                 priority=10,
+                expires_at=_expires_at(None, cfg),
             )
         )
     if created == 0:
@@ -154,9 +170,10 @@ def _persist_findings(
     job_id: int | None = None,
     stage: str = "finding",
     event_bus: RedisStreamBus | None = None,
+    repository_created_at: str | datetime | None = None,
 ) -> int:
     created = 0
-    scoped_findings = filter_automatic_findings(dedupe(findings))
+    scoped_findings = filter_automatic_findings(dedupe(findings), cfg)
     scoped_ids = {id(finding) for finding in scoped_findings}
     for finding in findings:
         if id(finding) not in scoped_ids:
@@ -170,7 +187,11 @@ def _persist_findings(
                 and cfg.is_validation_authorized(canonical)
             ):
                 validate_finding(finding, cfg)
-            finding_id, inserted = store.upsert_finding(finding, run_id=run_id)
+            finding_id, inserted = store.upsert_finding(
+                finding,
+                run_id=run_id,
+                repository_created_at=repository_created_at,
+            )
             created += int(inserted)
             if event_bus is not None:
                 location_key = hashlib.sha256(
@@ -217,6 +238,8 @@ def _handle_search(
     event_bus: RedisStreamBus | None = None,
 ) -> None:
     payload = _payload(job)
+    if str(payload.get("type_id") or "") not in enabled_search_type_ids(cfg):
+        return
 
     def reserve_search_request() -> None:
         # Chamado para CADA página; coordena todos os processos/containers.
@@ -285,9 +308,12 @@ def _handle_search(
                         "blob_sha": blob_sha,
                         "branch": metadata.default_branch,
                         "matched_type": payload.get("type_id", ""),
+                        "event_created_at": metadata.created_at,
+                        "repository_created_at": metadata.created_at,
                     },
                     run_id=job.get("run_id"),
                     priority=5,
+                    expires_at=_expires_at(metadata.created_at, cfg),
                 )
             )
     finally:
@@ -319,7 +345,7 @@ def _handle_blob(
     if text is None:
         raise RuntimeError("blob indisponível ou acima do limite")
     findings = filter_automatic_findings(
-        extract_from_text(text, repo=repo, path=path, source="code")
+        extract_from_text(text, repo=repo, path=path, source="code"), cfg
     )
     for finding in findings:
         finding.blob_sha = str(payload["blob_sha"])
@@ -332,6 +358,7 @@ def _handle_blob(
         job_id=int(job.get("id") or 0),
         stage=stage_for_job(job),
         event_bus=event_bus,
+        repository_created_at=payload.get("repository_created_at"),
     )
 
 
@@ -348,7 +375,7 @@ def _handle_history(
     mode = str(payload.get("mode") or "history")
     if mode == "head":
         result = HeadGitScanner(cfg).scan_repo(url)
-        findings = filter_automatic_findings(result.findings)
+        findings = filter_automatic_findings(result.findings, cfg)
         expand_history = cfg.scan_history
         repository_ref = hashlib.sha256(repo.encode("utf-8")).hexdigest()[:12]
         print(
@@ -364,6 +391,7 @@ def _handle_history(
             job_id=int(job.get("id") or 0),
             stage=stage_for_job(job),
             event_bus=event_bus,
+            repository_created_at=payload.get("repository_created_at"),
         )
         if expand_history:
             natural_key = str(payload.get("history_natural_key") or "")
@@ -377,6 +405,8 @@ def _handle_history(
                     "repo": repo,
                     "trufflehog": bool(payload.get("trufflehog", True)),
                     "candidate_id": payload.get("candidate_id"),
+                    "event_created_at": payload.get("event_created_at"),
+                    "repository_created_at": payload.get("repository_created_at"),
                     "mode": "history",
                     "trigger": (
                         "head_secret_signal"
@@ -387,6 +417,7 @@ def _handle_history(
                 run_id=job.get("run_id"),
                 priority=5,
                 max_attempts=3,
+                expires_at=_expires_at(payload.get("repository_created_at"), cfg),
             )
         return
     if mode != "history":
@@ -395,7 +426,7 @@ def _handle_history(
         findings = trufflehog_scan(url, cfg)
     else:
         findings = NativeGitScanner(cfg).scan_repo(url)
-    findings = filter_automatic_findings(findings)
+    findings = filter_automatic_findings(findings, cfg)
     _persist_findings(
         store,
         cfg,
@@ -404,6 +435,7 @@ def _handle_history(
         job_id=int(job.get("id") or 0),
         stage=stage_for_job(job),
         event_bus=event_bus,
+        repository_created_at=payload.get("repository_created_at"),
     )
 
 
@@ -711,7 +743,7 @@ def _process_redis_job_message(
             bus.ack_job(stage, message_id)
             return "dead_letter"
         status = str(state.get("status") or "")
-        if status in {"completed", "failed"}:
+        if status in {"completed", "failed", "expired"}:
             bus.publish_event(
                 f"job.{status}",
                 event_key=f"job:{job_id}:{status}",

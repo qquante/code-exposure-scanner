@@ -32,7 +32,9 @@ class Config:
     salt_path: Path = field(default_factory=lambda: Path("output") / ".salt")
     validate: bool = False           # validação é OPT-IN (ética/legal)
     validate_crypto: bool = False    # valida formato e deriva endereço localmente
-    scan_history: bool = True
+    ai_detection_enabled: bool = True
+    private_key_detection_enabled: bool = False
+    scan_history: bool = False
     entropy_min: float = 3.5
     request_timeout: int = 10
     http_retries: int = 3             # retry de validação de API (transitórios)
@@ -158,6 +160,8 @@ class Config:
         for key, env in {
             "validate": "SH_VALIDATE",
             "validate_crypto": "SH_VALIDATE_CRYPTO",
+            "ai_detection_enabled": "SH_AI_DETECTION_ENABLED",
+            "private_key_detection_enabled": "SH_PRIVATE_KEY_DETECTION_ENABLED",
             "scan_history": "SH_SCAN_HISTORY",
             "entropy_min": "SH_ENTROPY_MIN",
             "request_timeout": "SH_REQUEST_TIMEOUT",
@@ -228,7 +232,8 @@ class Config:
                 val = os.environ.get(env)
             if val is not None:
                 if key in (
-                    "validate", "validate_crypto", "scan_history",
+                    "validate", "validate_crypto", "ai_detection_enabled",
+                    "private_key_detection_enabled", "scan_history",
                     "allow_public_contact_issue", "allow_global_search",
                     "ingest_allow_symlinks", "discovery_auto_queue_scans",
                     "discovery_include_forks", "evidence_enabled", "event_bus_enabled",
@@ -339,6 +344,10 @@ def _apply(cfg: Config, data: dict) -> None:
         cfg.validate = bool(data["validate"])
     if "validate_crypto" in data:
         cfg.validate_crypto = bool(data["validate_crypto"])
+    if "ai_detection_enabled" in data:
+        cfg.ai_detection_enabled = bool(data["ai_detection_enabled"])
+    if "private_key_detection_enabled" in data:
+        cfg.private_key_detection_enabled = bool(data["private_key_detection_enabled"])
     if "scan_history" in data:
         cfg.scan_history = bool(data["scan_history"])
     if "entropy_min" in data:
@@ -380,7 +389,8 @@ def _apply(cfg: Config, data: dict) -> None:
     if "ingest_root" in data:
         cfg.ingest_root = Path(str(data["ingest_root"]))
     for key in (
-        "allow_global_search", "allow_public_contact_issue", "ingest_allow_symlinks",
+        "ai_detection_enabled", "private_key_detection_enabled", "allow_global_search",
+        "allow_public_contact_issue", "ingest_allow_symlinks",
         "discovery_auto_queue_scans", "discovery_include_forks", "evidence_enabled",
         "event_bus_enabled",
     ):
