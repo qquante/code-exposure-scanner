@@ -18,6 +18,7 @@
       notifications: "all",
       jobs: "all",
       detectors: "all",
+      aiProviders: "all",
     },
     refreshing: false,
     liveRefreshing: false,
@@ -65,6 +66,11 @@
     medium: "Médio",
     low: "Baixo",
   };
+
+  const VALID_VIEWS = new Set([
+    "overview", "candidates", "findings", "notifications", "jobs",
+    "pipeline", "runs", "detectors", "ai-providers",
+  ]);
 
   function statusPill(status) {
     const safe = String(status || "unknown").replace(/[^a-z_]/g, "");
@@ -195,6 +201,7 @@
       state.stats = stats;
       showApp();
       await refreshAll(false);
+      switchView(window.location.hash.slice(1) || "overview", false);
       startAutoRefresh();
     } catch (error) {
       state.token = "";
@@ -251,6 +258,7 @@
       renderOverview();
       renderFindings();
       renderPipeline();
+      renderAiProviders();
       $("#last-refresh").textContent = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date());
     } catch (_error) {
       // O refresh completo exibe erros; o pulso de 2 s permanece silencioso.
@@ -282,6 +290,7 @@
     renderPipeline();
     renderRuns();
     renderDetectors();
+    renderAiProviders();
   }
 
   function renderOverview() {
@@ -301,6 +310,7 @@
     updateBadge("#nav-candidate-count", candidateReviews);
     updateBadge("#nav-finding-count", stats.open_findings);
     updateBadge("#nav-notification-count", stats.pending_reviews);
+    updateBadge("#nav-ai-provider-count", aiProviderGroups().length);
 
     const activities = [
       ...state.candidates.map((item) => ({ kind: "candidate", title: item.repository, description: `Candidato · ${STATUS_LABELS[item.status] || item.status}`, date: item.updated_at || item.first_seen, icon: "◇" })),
@@ -502,7 +512,69 @@
     $("#detector-empty").hidden = rows.length > 0;
   }
 
-  function switchView(view) {
+  function aiProviderGroups() {
+    const findingsByType = new Map();
+    state.findings.filter((item) => item.category === "ai").forEach((item) => {
+      const list = findingsByType.get(item.type_id) || [];
+      list.push(item);
+      findingsByType.set(item.type_id, list);
+    });
+    const grouped = new Map();
+    state.detectors.filter((item) => item.category === "ai").forEach((detector) => {
+      const platform = detector.platform || "Operador não identificado";
+      const provider = grouped.get(platform) || { platform, detectors: [], findings: [] };
+      provider.detectors.push(detector);
+      provider.findings.push(...(findingsByType.get(detector.type_id) || []));
+      grouped.set(platform, provider);
+    });
+    return [...grouped.values()].sort((a, b) => {
+      if (b.findings.length !== a.findings.length) return b.findings.length - a.findings.length;
+      return a.platform.localeCompare(b.platform, "pt-BR");
+    });
+  }
+
+  function filteredAiProviders() {
+    const filter = state.filters.aiProviders;
+    const query = $("#ai-provider-search").value.trim().toLowerCase();
+    return aiProviderGroups().filter((provider) => {
+      const modes = new Set(provider.detectors.map((item) => item.detection_mode));
+      const matchesFilter = filter === "all"
+        || (filter === "with-findings" && provider.findings.length > 0)
+        || modes.has(filter);
+      const haystack = `${provider.platform} ${provider.detectors.map((item) => `${item.name} ${item.type_id} ${item.search_signal || ""}`).join(" ")}`.toLowerCase();
+      return matchesFilter && (!query || haystack.includes(query));
+    });
+  }
+
+  function renderAiProviders() {
+    const providers = aiProviderGroups();
+    const rows = filteredAiProviders();
+    const aiDetectors = state.detectors.filter((item) => item.category === "ai");
+    const aiFindings = state.findings.filter((item) => item.category === "ai");
+    $("#ai-provider-count").textContent = providers.length.toLocaleString("pt-BR");
+    $("#ai-summary-providers").textContent = providers.length.toLocaleString("pt-BR");
+    $("#ai-summary-detectors").textContent = aiDetectors.length.toLocaleString("pt-BR");
+    $("#ai-summary-findings").textContent = aiFindings.length.toLocaleString("pt-BR");
+    $("#ai-provider-grid").innerHTML = rows.map((provider) => {
+      const initials = provider.platform.split(/\s+/).map((part) => part[0] || "").join("").slice(0, 2).toUpperCase();
+      const modeLabels = [...new Set(provider.detectors.map((item) => item.detection_mode))]
+        .map((mode) => `<span class="coverage-pill">${esc(mode === "context" ? "Contexto" : "Prefixo")}</span>`).join("");
+      const detectorRows = provider.detectors.map((item) => `<li><div><strong>${esc(item.name)}</strong><code>${esc(item.type_id)}</code></div><span>${esc(item.search_signal || "contextual")}</span></li>`).join("");
+      const docsUrl = provider.detectors.find((item) => item.docs_url)?.docs_url || "";
+      const latest = provider.findings.reduce((current, item) => !current || new Date(item.last_seen) > new Date(current) ? item.last_seen : current, "");
+      return `<article class="ai-provider-card">
+        <header><div class="provider-identity"><span class="provider-mark">${esc(initials || "AI")}</span><div><h2>${esc(provider.platform)}</h2><p>${provider.detectors.length} defesa(s) ativa(s)</p></div></div><span class="status-pill status-safe">ATIVO</span></header>
+        <div class="provider-stats"><div><span>ACHADOS</span><strong>${provider.findings.length.toLocaleString("pt-BR")}</strong></div><div><span>ÚLTIMO</span><strong>${esc(latest ? relativeDate(latest) : "nenhum")}</strong></div></div>
+        <div class="coverage-row">${modeLabels}</div>
+        <ul class="provider-detector-list">${detectorRows}</ul>
+        <footer><button class="row-action primary" data-action="provider-findings" data-provider="${esc(provider.platform)}" ${provider.findings.length ? "" : "disabled"}>Ver achados</button>${docsUrl ? `<a class="row-action" href="${esc(docsUrl)}" target="_blank" rel="noopener noreferrer">Docs oficial ↗</a>` : ""}</footer>
+      </article>`;
+    }).join("");
+    $("#ai-provider-empty").hidden = rows.length > 0;
+  }
+
+  function switchView(view, updateRoute = true) {
+    if (!VALID_VIEWS.has(view)) view = "overview";
     state.activeView = view;
     $$('[data-view-panel]').forEach((panel) => {
       const active = panel.dataset.viewPanel === view;
@@ -511,6 +583,7 @@
     });
     $$(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
     $(".sidebar").classList.remove("open");
+    if (updateRoute && window.location.hash !== `#${view}`) window.history.pushState(null, "", `#${view}`);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -730,6 +803,14 @@
     if (action === "notification-reject") notificationAction(id, "reject", button);
     if (action === "notification-requeue") notificationAction(id, "requeue", button);
     if (action === "job-detail") jobDetail(id);
+    if (action === "provider-findings") {
+      const provider = button.dataset.provider || "";
+      $("#finding-search").value = provider;
+      state.filters.findings = "all";
+      $$('[data-filter-group="findings"] button[data-filter]').forEach((item) => item.classList.toggle("active", item.dataset.filter === "all"));
+      switchView("findings");
+      renderFindings();
+    }
   }
 
   function handleModalAction(event) {
@@ -769,11 +850,13 @@
       if (!button) return;
       $$('button[data-filter]', group).forEach((item) => item.classList.toggle("active", item === button));
       state.filters[group.dataset.filterGroup] = button.dataset.filter;
-      ({ candidates: renderCandidates, findings: renderFindings, notifications: renderNotifications, jobs: renderJobs, detectors: renderDetectors })[group.dataset.filterGroup]?.();
+      ({ candidates: renderCandidates, findings: renderFindings, notifications: renderNotifications, jobs: renderJobs, detectors: renderDetectors, aiProviders: renderAiProviders })[group.dataset.filterGroup]?.();
     }));
     $("#candidate-search").addEventListener("input", renderCandidates);
     $("#finding-search").addEventListener("input", renderFindings);
     $("#detector-search").addEventListener("input", renderDetectors);
+    $("#ai-provider-search").addEventListener("input", renderAiProviders);
+    window.addEventListener("hashchange", () => switchView(window.location.hash.slice(1) || "overview", false));
     $("#main-content").addEventListener("click", handleTableAction);
     $("#modal-backdrop").addEventListener("click", (event) => {
       if (event.target === $("#modal-backdrop") || event.target.closest(".close-modal")) closeModal();
@@ -800,6 +883,7 @@
     showApp();
     try {
       await refreshAll(false);
+      switchView(window.location.hash.slice(1) || "overview", false);
       startAutoRefresh();
     } catch (_) {
       showLogin("Não foi possível restaurar a sessão.");

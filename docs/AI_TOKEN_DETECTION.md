@@ -66,6 +66,11 @@ O GitHub Code Search é um caminho complementar e limitado por quota. Ele só us
 os IDs de `SEARCH_TYPES` dentro de `SEARCH_SCOPE`; busca global não é necessária
 para o fluxo de descoberta recente.
 
+O dashboard expõe `/#ai-providers`, uma visão agrupada por operador com os modos
+de detecção, sinais pesquisados, documentação oficial e acesso aos achados.
+“Recente” nessa tela significa publicação em repositório criado dentro do teto
+configurado; não é possível inferir a data em que o provedor emitiu a chave.
+
 ## Limites
 
 - Não existe regex que cubra literalmente todas as chaves: formatos podem mudar.

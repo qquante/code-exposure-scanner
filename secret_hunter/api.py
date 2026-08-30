@@ -11,6 +11,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, sta
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from .ai_detection.catalog import AI_SECRET_SPECS
 from .config import Config
 from .event_bus import RedisStreamBus
 from .patterns import SECRET_TYPES
@@ -40,6 +41,14 @@ app = FastAPI(
 )
 
 _DASHBOARD_DIR = Path(__file__).with_name("dashboard")
+_AI_DETECTOR_METADATA = {
+    spec.type_id: {
+        "detection_mode": spec.detection_mode,
+        "search_signal": spec.search_literal.strip('"'),
+        "docs_url": spec.docs_url,
+    }
+    for spec in AI_SECRET_SPECS
+}
 
 
 @app.middleware("http")
@@ -163,6 +172,7 @@ def detectors(_: str = Depends(_admin)) -> list[dict]:
             "risk": detector.risk,
             "description": detector.description,
             "validation": detector.verify_note,
+            **_AI_DETECTOR_METADATA.get(detector.type_id, {}),
         }
         for detector in SECRET_TYPES
         if detector.type_id in AUTOMATIC_SECRET_TYPE_IDS

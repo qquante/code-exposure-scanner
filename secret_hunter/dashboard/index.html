@@ -109,6 +109,9 @@
         <button class="nav-item" data-view="detectors" type="button">
           <span class="nav-icon">⌁</span><span>Detectores</span>
         </button>
+        <button class="nav-item" data-view="ai-providers" type="button">
+          <span class="nav-icon">AI</span><span>Defesas IA</span><b id="nav-ai-provider-count" hidden>0</b>
+        </button>
       </nav>
 
       <div class="sidebar-footer">
@@ -140,7 +143,7 @@
       <main id="main-content">
         <section class="view active" id="view-overview" data-view-panel="overview">
           <div class="page-heading">
-            <div><span class="eyebrow"><i></i> Monitoramento defensivo</span><h1>Visão operacional</h1><p>Do evento público ao achado cripto, com filas Redis independentes e rastreabilidade por estágio.</p></div>
+            <div><span class="eyebrow"><i></i> Monitoramento defensivo</span><h1>Visão operacional</h1><p>Do evento público ao achado cripto ou IA, com filas Redis independentes e rastreabilidade por estágio.</p></div>
             <div class="system-state"><span class="pulse-dot"></span><div><strong>Sistema operacional</strong><small id="system-state-detail">API e banco respondendo</small></div></div>
           </div>
 
@@ -220,6 +223,23 @@
           <div class="page-heading compact-heading"><div><span class="eyebrow"><i></i> Catálogo de cobertura</span><h1>Detectores</h1><p>Tipos reconhecidos, risco atribuído e estratégia de validação defensiva.</p></div><div class="catalog-count"><strong id="detector-count">—</strong><span>detectores ativos</span></div></div>
           <div class="toolbar"><div class="filter-tabs" data-filter-group="detectors"><button class="active" data-filter="all">Todos</button><button data-filter="payment">Pagamentos</button><button data-filter="cloud">Cloud</button><button data-filter="database">Bancos</button><button data-filter="crypto">Cripto</button><button data-filter="vcs">VCS</button><button data-filter="ai">IA</button></div><input class="search-input" id="detector-search" type="search" placeholder="Buscar detector…"></div>
           <div class="detector-grid" id="detector-grid"></div><div class="empty-state standalone" id="detector-empty" hidden><span>⌁</span><h3>Nenhum detector encontrado</h3></div>
+        </section>
+
+        <section class="view" id="view-ai-providers" data-view-panel="ai-providers" hidden>
+          <div class="page-heading compact-heading ai-heading">
+            <div><span class="eyebrow"><i></i> Cobertura especializada</span><h1>Defesas por provedor de IA</h1><p>Cada operador, seus sinais defensivos e os achados redigidos em uma visão única.</p></div>
+            <div class="catalog-count"><strong id="ai-provider-count">—</strong><span>provedores cobertos</span></div>
+          </div>
+          <div class="recency-notice"><strong>Janela recente correta</strong><span>O sistema prioriza repositórios recém-criados e aceita no máximo 4 horas. Isso mede quando o código foi publicado, não quando a chave foi emitida.</span></div>
+          <div class="ai-summary-grid">
+            <article><span>PROVEDORES</span><strong id="ai-summary-providers">—</strong><small>catálogo defensivo</small></article>
+            <article><span>DETECTORES</span><strong id="ai-summary-detectors">—</strong><small>prefixo ou contexto</small></article>
+            <article><span>ACHADOS IA</span><strong id="ai-summary-findings">—</strong><small>na amostra administrativa</small></article>
+            <article><span>VALIDAÇÃO ATIVA</span><strong>OFF</strong><small>somente detecção passiva</small></article>
+          </div>
+          <div class="toolbar ai-provider-toolbar"><div class="filter-tabs" data-filter-group="aiProviders"><button class="active" data-filter="all">Todos</button><button data-filter="with-findings">Com achados</button><button data-filter="prefix">Prefixo</button><button data-filter="context">Contexto</button></div><input class="search-input" id="ai-provider-search" type="search" placeholder="Buscar OpenAI, Claude, Groq…"></div>
+          <div class="ai-provider-grid" id="ai-provider-grid"></div>
+          <div class="empty-state standalone" id="ai-provider-empty" hidden><span>AI</span><h3>Nenhum provedor encontrado</h3><p>Ajuste a busca ou o filtro de cobertura.</p></div>
         </section>
       </main>
     </div>

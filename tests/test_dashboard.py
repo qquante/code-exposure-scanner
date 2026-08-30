@@ -10,7 +10,7 @@ pytest.importorskip("fastapi")
 from fastapi import Request
 from fastapi.responses import Response
 
-from secret_hunter.api import app, dashboard, security_headers
+from secret_hunter.api import app, dashboard, detectors, security_headers
 
 
 DASHBOARD = Path(__file__).parents[1] / "secret_hunter" / "dashboard"
@@ -38,7 +38,7 @@ def test_dashboard_exposes_all_operational_sections_and_actions() -> None:
 
     for section in (
         "overview", "candidates", "findings", "notifications",
-        "jobs", "pipeline", "runs", "detectors",
+        "jobs", "pipeline", "runs", "detectors", "ai-providers",
     ):
         assert f'data-view-panel="{section}"' in index
     for endpoint in (
@@ -53,6 +53,19 @@ def test_dashboard_exposes_all_operational_sections_and_actions() -> None:
     assert "latest_commit_sha" in javascript
     assert "window.setInterval(refreshLive, 2000)" in javascript
     assert 'rel="noopener noreferrer"' in javascript
+    assert 'window.location.hash.slice(1) || "overview"' in javascript
+    assert 'data-action="provider-findings"' in javascript
+    assert "renderAiProviders" in javascript
+
+
+def test_ai_detector_metadata_supports_provider_dashboard() -> None:
+    catalog = detectors("test-admin")
+    ai = [item for item in catalog if item["category"] == "ai"]
+
+    assert len(ai) >= 20
+    assert all(item["detection_mode"] in {"prefix", "context"} for item in ai)
+    assert all(item["search_signal"] for item in ai)
+    assert all(item["docs_url"].startswith("https://") for item in ai)
 
 
 def test_dashboard_mobile_breakpoint_releases_desktop_sidebar_column() -> None:
