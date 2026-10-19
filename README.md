@@ -1,214 +1,73 @@
-# Secret Hunter
+# Code Exposure Scanner
 
-Pipeline defensivo para localizar segredos em código público do GitHub e preparar divulgação responsável. O deploy distribuído usa PostgreSQL como fonte de verdade e Redis Streams autenticado para transportar jobs entre workers independentes, registrar eventos sanitizados e preservar evidência acadêmica bruta.
+A defensive pipeline for authorized code-secret discovery, sanitized findings and responsible disclosure workflows.
 
-> Use somente em repositórios próprios, escopos autorizados ou divulgação responsável. Validação ativa de credenciais de terceiros fica desabilitada. O PostgreSQL nunca recebe o segredo bruto e o serviço nunca publica detalhes sensíveis em Issue pública. Quando habilitado, o Redis guarda a resposta bruta protegida somente pela senha da instância e deve ser tratado como material altamente sensível.
+![review](https://img.shields.io/badge/review-private-374151) ![primary](https://img.shields.io/badge/primary-Python-2563EB) [![LinkedIn](https://img.shields.io/badge/LinkedIn-Douglas%20Silva-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/douglas-silva-data-analyst/)
 
-## O que está implementado
+[Overview](#overview) · [Architecture](#architecture) · [Setup](#setup) · [Validation](#validation) · [Roadmap](#roadmap) · [Review notes](docs/REVIEW.md)
 
-- GitHub `search/code` com escopo obrigatório `org:`, `user:` ou `repo:`; busca global exige opt-in explícito.
-- Extração em camadas: regex, contexto e validação estrutural para pagamentos, cloud, bancos, VCS, IA e mensageria; EVM/Solana incluem hex, arrays, Base58, Base64, BIP39 e keystore criptografado.
-- Fetch por SHA de blob imutável para evitar corrida entre busca e alteração do arquivo.
-- Histórico completo por Git nativo e TruffleHog 3.96.0 com verificação externa desabilitada.
-- PostgreSQL com jobs idempotentes, leases, heartbeat, `FOR UPDATE SKIP LOCKED`, retry com backoff e limitador de Code Search compartilhado entre containers.
-- Redis Streams autenticado e persistente para filas por estágio, eventos sanitizados e evidência bruta positiva/HTTP com SHA-256, sem porta publicada, TTL ou trimming automático.
-- Um draft ativo por repositório, agregando achados sem duplicar alertas.
-- O perfil padrão é IA-only: `AI_DETECTION_ENABLED=true` e `PRIVATE_KEY_DETECTION_ENABLED=false`. A segunda flag religa EVM/Solana/BIP39 sem alterar código; divulgação externa continua sob aprovação humana.
-- API administrativa autenticada que lista catálogo, achados, localizações, runs, jobs e drafts. Nenhuma resposta contém segredo bruto.
-- Drop-zone modular read-only com adapters `tree` e `manifest`, SHA-256 contra
-  corrida de arquivo e workers exclusivos de ingestão.
+## Overview
 
-- Descoberta global via Repository Search: janelas `created:` e `pushed:` fechadas
-  de 60s, divisão adaptativa sob o teto de 1.000, reconciliação e fila auditada.
-  `pushed:` apenas revisita repositórios que também foram criados nas últimas 4h.
-  Jobs automáticos vencem pela data real de criação do repositório e nunca são
-  processados depois do limite. Todo candidato elegível segue por HEAD; histórico
-  completo é opt-in com `SCAN_HISTORY=true` e o perfil Docker `history`.
+- Scoped repository discovery and immutable blob retrieval reduce scan ambiguity.
+- Pattern and structural detectors produce sanitized findings.
+- Queue, recovery and disclosure modules separate detection from notification.
 
-O SQLite permanece apenas como modo local/legado de processo único. Não o use com vários workers.
+**Technology:** Python · PostgreSQL · Redis Streams · SQLite paths · HTTP API · Docker
 
-## PostgreSQL e Redis têm papéis separados
+**Persistence and data:** PostgreSQL tracks jobs and findings; Redis transports events and may hold sensitive raw evidence in configured modes. Local storage paths are also present.
 
-PostgreSQL permanece como fonte de verdade transacional para deduplicação, jobs, achados, drafts e auditoria. Redis Streams separa `metadata-live`, `metadata-backfill`, `head-live`, `head-backfill`, os streams legados, `search`, `blob`, `history` e `ingest`; também recebe eventos sanitizados e o corpus HTTP bruto protegido por autenticação Redis. O Redis nunca decide o estado final do job e os streams operacionais não recebem o valor bruto encontrado.
-
-## Subir localmente com Docker
-
-Pré-requisitos: Docker Desktop com Compose e PowerShell.
-
-1. Crie dois PATs independentes: um somente de leitura para busca e outro para
-notificação privada. O passo a passo e as permissões mínimas estão em
-[docs/TOKENS_AND_ENV.md](docs/TOKENS_AND_ENV.md). Gere os arquivos locais; sem
-parâmetros, o script pede os dois tokens de forma oculta:
-
-```powershell
-.\scripts\init-secrets.ps1
-```
-
-Também é possível ler os tokens de arquivos temporários sem colocá-los no
-histórico do shell:
-
-```powershell
-.\scripts\init-secrets.ps1 `
-  -GitHubSearchTokenFile C:\caminho\github-search-token.txt `
-  -GitHubNotifyTokenFile C:\caminho\github-notify-token.txt
-```
-
-2. Suba somente PostgreSQL, migração e API. Isso não inicia busca nem notificação:
-
-```powershell
-docker compose up -d --build api
-docker compose ps
-```
-
-A API fica somente em `127.0.0.1:8000`. Teste:
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8000/health
-$adminToken = (Get-Content .\.secrets\admin_api_token.txt -Raw).Trim()
-$headers = @{ Authorization = "Bearer $adminToken" }
-Invoke-RestMethod http://127.0.0.1:8000/stats -Headers $headers
-Invoke-RestMethod http://127.0.0.1:8000/detectors -Headers $headers
-```
-
-Abra o dashboard operacional no navegador:
+## Architecture
 
 ```text
-http://127.0.0.1:8000/
+Authorized repository scope → immutable source/history scan → local detection → sanitized storage → private review/disclosure
 ```
 
-Ele solicita o conteúdo de `.secrets/admin_api_token.txt`. O token fica somente
-na sessão da aba (`sessionStorage`), nunca em URL, cookie ou `localStorage`. O
-dashboard cobre visão geral, candidatos, achados, notificações, jobs, pipeline Redis, execuções
-e catálogo de detectores. Achados novos aparecem no pulso de 2 segundos em cards com o
-hint redigido, arquivo, linha e link direto ao GitHub, sem expor o segredo completo.
-A tela de achados abre em `Recentes 4h`; registros anteriores continuam preservados
-em `Arquivo`, sem misturar o backlog histórico com o fluxo live.
-A rota `/#ai-providers` agrupa as defesas por operador de IA, mostra sinais de
-detecção, quantidade de achados e oferece filtro direto para cada provedor.
+| Location | Review focus |
+| --- | --- |
+| [`secret_hunter/scan_policy.py`](secret_hunter/scan_policy.py) | Source/configuration inspected for scope and structure |
+| [`secret_hunter/pipeline.py`](secret_hunter/pipeline.py) | Source/configuration inspected for scope and structure |
+| [`secret_hunter/disclosure.py`](secret_hunter/disclosure.py) | Source/configuration inspected for scope and structure |
+| [`secret_hunter/history_scan.py`](secret_hunter/history_scan.py) | Source/configuration inspected for scope and structure |
+| [`compose.yaml`](compose.yaml) | Source/configuration inspected for scope and structure |
 
-3. Para um repositório específico, enfileire o histórico e suba workers, sem scheduler global:
+Internal package and module names are retained where changing them would affect imports or compatibility. This descriptive repository name does not imply a completed package/API migration.
 
-```powershell
-$body = @{ repository = "owner/repo"; trufflehog = $true } | ConvertTo-Json
-Invoke-RestMethod http://127.0.0.1:8000/jobs/repository -Method Post -Headers $headers -ContentType application/json -Body $body
-docker compose --profile scanner up -d --build --scale history-worker=2
-```
+## Setup
 
-4. Para busca recorrente, edite `SEARCH_SCOPE` no `.env` com um escopo estrito e
-suba o perfil completo:
+Use pyproject.toml for package installation and config.example.yaml for configuration structure. Do not enable live discovery or notifications to reproduce a unit test.
 
-```powershell
-docker compose --profile scanner up -d --build --scale search-worker=2
-```
+Start from an isolated environment. Use `.env.example` when present and inspect the configuration loader: an example file is not necessarily loaded automatically. Runtime databases, real account sessions and private credentials are not bundled. Live integration prerequisites are separate from local tests.
 
-Escopos aceitos: `org:nome`, `user:nome` ou `repo:owner/repo`. `ALLOW_GLOBAL_SEARCH=true` existe, mas não é recomendado.
+## Validation
 
-Para descobrir e escanear automaticamente repositórios públicos recém-criados:
+Static parsing checked 40 Python files and 1 strict JSON files. Python syntax errors: 0; JSON errors: 0. No functional test/build result is claimed for this preparation.
 
-```powershell
-docker compose --profile scanner --profile discovery up -d --build
+Available test scripts are inventoried in [the review notes](docs/REVIEW.md). Choose offline checks before operating any integration.
 
-```
+These results apply to the selected checks on the preparation copy. They do not establish deployment readiness, full coverage, live provider availability or measured performance. CI definitions, when present under `docs/ci-templates/`, are inactive review templates; no remote CI badge is claimed.
 
-Com `DISCOVERY_AUTO_QUEUE_SCANS=true`, todos os candidatos elegíveis (100%) passam por
-clone raso e limitado da árvore atual. Em paralelo, a Code Search roda a cada
-hora para os detectores explicitamente escolhidos em `SEARCH_TYPES`. Antes de baixar um blob, confirma via
-metadados que o repositório foi criado nas últimas 4h. O histórico completo só é enfileirado
-quando o pré-scan encontra um tipo da allowlist automática cripto/IA. Bitcoin WIF, PEM,
-outras categorias e caminhos de dependências (`node_modules`, ambientes Python, `.pnpm` e
-`.yarn`) são descartados antes da persistência. Validação ativa permanece
-desabilitada e sem wildcard em `AUTHORIZED_VALIDATION_REPOS`.
+## Limits and current status
 
-O endpoint manual `POST /candidates/{id}/authorize-scan` permanece disponível apenas para reprocessamento controlado. Veja
-[docs/GLOBAL_DISCOVERY.md](docs/GLOBAL_DISCOVERY.md). O catálogo de operadores e os
-limites dos detectores de IA estão em [docs/AI_TOKEN_DETECTION.md](docs/AI_TOKEN_DETECTION.md).
+Raw secret material is not included in this copy. Detection fixtures intentionally contain obviously invalid key markers. No live repository scan, credential validation or disclosure was executed.
 
-5. Revise o detalhe privado e aprove manualmente:
+This private snapshot is for code and portfolio review. Generated runtime material and unreviewed binary assets may be excluded. [Review notes](docs/REVIEW.md) record preparation scope, findings and outstanding validation.
 
-```powershell
-$drafts = Invoke-RestMethod http://127.0.0.1:8000/notifications -Headers $headers
-$draftId = $drafts[0].id
-Invoke-RestMethod "http://127.0.0.1:8000/notifications/$draftId" -Headers $headers
-Invoke-RestMethod "http://127.0.0.1:8000/notifications/$draftId/approve" -Method Post -Headers $headers
-```
+## Roadmap
 
-6. Só depois da revisão, inicie o envio:
+- [ ] Run isolated detector/regression suites.
+- [ ] Review queue permissions and raw-evidence retention.
+- [ ] Verify disclosure remains private and requires an authorized scope.
 
-```powershell
-docker compose --profile notifications up -d notification-worker
-```
+## History and attribution
 
-O envio tenta um relatório privado. Se o repositório não habilitou esse canal, o draft fica `needs_contact`; não abre Issue pública. Uma tentativa ambígua não é repetida automaticamente. Após conferir no GitHub que nada foi criado, o administrador pode usar `POST /notifications/{id}/requeue`.
+9 existing commits were retained after path/content filtering. Original authors and author/committer dates were retained; commit hashes may change. Upstream commits are not presented as new work by the maintainer.
 
-## API administrativa
+No open-source license is granted by this preparation. A license and attribution review is required before public redistribution.
 
-Todos, exceto `/health`, exigem `Authorization: Bearer <admin_api_token>`.
+## Maintainer and feedback
 
-| Endpoint | Finalidade |
-|---|---|
-| `GET /detectors` | Todos os tipos, plataformas, categorias, riscos e modo de validação |
-| `GET /findings` | Lista sanitizada e paginada |
-| `GET /findings/{id}` | Todos os campos seguros e todas as localizações |
-| `GET /runs` | Rodadas e contadores |
-| `GET /jobs` | Estado durável, tentativas, leases e erros |
-| `GET /streams` | Lag, pendências e consumidores dos Redis Streams |
-| `GET /events` | Eventos sanitizados indexados no PostgreSQL |
-| `GET /candidates` | Candidatos globais e estado de revisão/filtro |
-| `GET /candidates/{id}` | Metadados e trilha de autorização do candidato |
-| `GET /notifications` | Fila de revisão sem corpos |
-| `GET /notifications/{id}` | Draft privado/público e achados agregados |
-| `POST /jobs/search` | Agenda uma rodada no escopo configurado |
-| `POST /jobs/repository` | Agenda histórico de um repo GitHub |
-| `POST /jobs/ingest` | Enumera arquivos entregues no drop-zone read-only |
-| `POST /candidates/{id}/authorize-scan` | Registra autorização e agenda scan atomicamente |
-| `POST /candidates/{id}/reject` | Rejeita candidato sem scan |
-| `POST /notifications/{id}/approve` | Aprovação humana auditada |
-| `POST /notifications/{id}/reject` | Rejeição humana auditada |
-| `POST /notifications/{id}/requeue` | Recuperação manual após reconciliação externa |
-| `GET /` | Dashboard administrativo local e responsivo |
+Douglas de Oliveira Silva · [GitHub](https://github.com/qquante) · [LinkedIn](https://www.linkedin.com/in/douglas-silva-data-analyst/)
 
-Veja [docs/DATA_MODEL.md](docs/DATA_MODEL.md) para a origem e o consumo de cada
-campo, [docs/FILE_INGESTION.md](docs/FILE_INGESTION.md) para conectar arquivos,
-[docs/GLOBAL_DISCOVERY.md](docs/GLOBAL_DISCOVERY.md) para repositórios novos,
-[docs/REDIS_PIPELINE.md](docs/REDIS_PIPELINE.md) para workers e Redis Streams,
-[docs/RAW_EVIDENCE_REDIS.md](docs/RAW_EVIDENCE_REDIS.md) para a preservação bruta no Redis,
-[docs/TCC_CRYPTO_METHODOLOGY.md](docs/TCC_CRYPTO_METHODOLOGY.md) para o recorte
-acadêmico EVM/Solana, [docs/TCC_CRYPTO_BENCHMARK.md](docs/TCC_CRYPTO_BENCHMARK.md)
-para o corpus e métricas dos detectores, [docs/TOKENS_AND_ENV.md](docs/TOKENS_AND_ENV.md) para
-credenciais/configuração e [docs/OPERATIONS.md](docs/OPERATIONS.md) para
-operação/produção.
+For this private review, report reproducible issues with a minimal fixture and the exact check output. Keep account data, credentials and generated sensitive reports out of issues and commits. Existing contribution guidelines apply where present.
 
-## Segurança e validação
-
-- O segredo existe temporariamente em uma string Python, é usado para HMAC-SHA256 e a referência é removida. Python não garante zeroização física dessa memória.
-- O PostgreSQL recebe apenas fingerprint HMAC, hint fixo do tipo e metadados. Não há prefixo+sufixo do segredo no deploy distribuído.
-- O corpus HTTP bruto fica no Redis em formato original, com SHA-256 para conferência, protegido somente pela senha do Redis e pelo isolamento Docker.
-- O volume Redis não possui criptografia de aplicação. Não exponha a porta, a senha, o volume ou o comando de leitura bruta.
-- A chave HMAC deve ser igual em todos os workers e não deve ser rotacionada sem uma migração planejada.
-- Validação de API é opt-in e só funciona quando o repositório está em `SH_AUTHORIZED_VALIDATION_REPOS`. Ela faz uma chamada mínima de autenticação, não lê dados de negócio.
-- No Compose, use `VALIDATE_SECRETS=true` e `AUTHORIZED_VALIDATION_REPOS=owner/repo[,owner/repo]`. Mantenha desabilitado fora de escopo formalmente autorizado.
-- Validação cripto é apenas local: formato/checksum e derivação do endereço público. Não consulta saldo, não usa RPC, não assina e não transmite chave.
-- Saldo zero nunca significa chave inválida.
-- Apagar a linha ou reescrever o Git não revoga uma credencial. A correção essencial é rotacioná-la no provedor.
-
-## Testes
-
-```powershell
-python scripts/benchmark_crypto_detectors.py
-python -m pytest -q
-docker compose --profile test run --rm --build test
-```
-
-Os testes PostgreSQL cobrem enqueue concorrente, `SKIP LOCKED`, checkpoint/lease
-do coletor, candidato/autorização atômicos, upsert idempotente, agregação de
-drafts, ausência de raw secret, ledger temporal e runs vazias. Os testes unitários
-cobrem paginação completa, divisão temporal, ordenação local, cursor legado, retry,
-reuso de metadados, filtros, histórico e detectores. O benchmark cripto é um gate
-exato sobre corpus sintético rotulado; seus números não representam acurácia em
-repositórios reais.
-
-## Publicação em VPS
-
-Mantenha PostgreSQL sem porta pública e a API em loopback. Exponha somente HTTPS por um reverse proxy com autenticação adicional, firewall e backup diário (`pg_dump`). Os workers precisam apenas de saída HTTPS para GitHub; não precisam de porta de entrada. Não monte o Docker socket nos containers.
-
-Para uma instalação real ainda faltam dados externos que não devem ser inventados: host/VPS, domínio, certificado, política de retenção, backup e um token GitHub com o menor escopo possível. O Compose deste repositório é um deploy local funcional, não prova produção pública.
+**Topics:** `python`, `secret-scanning`, `defensive-security`, `postgresql`, `redis`, `static-analysis`
