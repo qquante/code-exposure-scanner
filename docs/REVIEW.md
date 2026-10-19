@@ -43,3 +43,7 @@ Before any public release, complete content/asset attribution, dependency and se
 ## Maintainer
 
 [Douglas de Oliveira Silva on LinkedIn](https://www.linkedin.com/in/douglas-silva-data-analyst/) · [GitHub](https://github.com/qquante)
+
+## Additional static diagnostics
+
+Ruff fatal Python diagnostics: **0**. No finding was reported by this selected rule set; this is not a full code audit. See [structured diagnostics](STATIC_REVIEW.json).
