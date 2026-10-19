@@ -55,3 +55,20 @@ reports/
 logs/
 tmp/
 runtime/
+
+# Private review: local credentials and user state
+.env
+.env.*
+!.env.example
+!.env.*.example
+.secrets/
+*.session
+*.session-journal
+cookies.txt
+storage_state*.json
+*.pem
+*.p12
+*.key
+*.sqlite
+*.sqlite3
+*.db

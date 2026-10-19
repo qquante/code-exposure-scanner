@@ -1,5 +1,8 @@
 # Code Exposure Scanner
 
+> **Local private review:** publication is paused. See [security review and remaining release conditions](docs/SECURITY_REVIEW.md). Local fixes have not been pushed.
+
+
 A defensive pipeline for authorized code-secret discovery, sanitized findings and responsible disclosure workflows.
 
 ![review](https://img.shields.io/badge/review-private-374151) ![primary](https://img.shields.io/badge/primary-Python-2563EB) [![LinkedIn](https://img.shields.io/badge/LinkedIn-Douglas%20Silva-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/douglas-silva-data-analyst/)
