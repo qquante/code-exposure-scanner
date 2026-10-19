@@ -1,0 +1,6 @@
+{
+  "tool": "Ruff 0.17.1",
+  "scope": "Fatal Python diagnostics only; no automatic edits or runtime execution",
+  "exit_code": 0,
+  "findings": []
+}
