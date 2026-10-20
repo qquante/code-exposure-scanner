@@ -21,9 +21,7 @@ from dataclasses import dataclass
 from .ai_detection.catalog import AI_SECRET_SPECS
 
 
-# --------------------------------------------------------------------------- #
 # Utilidades
-# --------------------------------------------------------------------------- #
 def shannon_entropy(data: str) -> float:
     """Entropia de Shannon (bits/caractere) — usada para filtrar falsos positivos."""
     if not data:
@@ -97,9 +95,7 @@ _EVM_LIBRARY_HINT = (
 )
 
 
-# --------------------------------------------------------------------------- #
 # Catálogo de padrões
-# --------------------------------------------------------------------------- #
 SECRET_TYPES: list[SecretType] = [
     # ----------------------------- Pagamentos ----------------------------- #
     SecretType(
@@ -362,9 +358,7 @@ SECRET_TYPES: list[SecretType] = [
 ]
 
 
-# --------------------------------------------------------------------------- #
 # Índices auxiliares
-# --------------------------------------------------------------------------- #
 TYPES_BY_ID: dict[str, SecretType] = {t.type_id: t for t in SECRET_TYPES}
 
 # Identifica a versão efetiva dos detectores. Entra nas chaves idempotentes para

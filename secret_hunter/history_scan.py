@@ -28,9 +28,7 @@ from .scan_policy import (
 )
 
 
-# --------------------------------------------------------------------------- #
 # 1. Scanner nativo (sem dependências externas)
-# --------------------------------------------------------------------------- #
 class NativeGitScanner:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -112,9 +110,7 @@ class NativeGitScanner:
         return findings
 
 
-# --------------------------------------------------------------------------- #
 # 2. Integração com o TruffleHog real (opcional)
-# --------------------------------------------------------------------------- #
 def trufflehog_available() -> bool:
     try:
         r = subprocess.run(["trufflehog", "--version"], capture_output=True, text=True)

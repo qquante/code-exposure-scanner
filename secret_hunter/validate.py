@@ -23,9 +23,7 @@ from .extract import Finding
 
 log = logging.getLogger("secret_hunter.validate")
 
-# --------------------------------------------------------------------------- #
 # Base58 / Base58Check (Bitcoin WIF, Solana)
-# --------------------------------------------------------------------------- #
 _ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 
@@ -67,9 +65,7 @@ def _b58check(payload: bytes) -> str:
     return "1" * pad + out
 
 
-# --------------------------------------------------------------------------- #
 # Validação de cripto estritamente local
-# --------------------------------------------------------------------------- #
 def _evm_address_from_key(priv_hex: str) -> str | None:
     """Deriva o endereço EVM a partir da chave privada. Retorna None se sem lib."""
     raw = priv_hex[2:] if priv_hex.startswith("0x") else priv_hex
@@ -217,9 +213,7 @@ def validate_solana(f: Finding, cfg: Config) -> None:
         f.validate_detail = f"{label} consistente; pubkey derivada localmente: {pub}"
 
 
-# --------------------------------------------------------------------------- #
 # Validação de chaves de API (uma única requisição mínima)
-# --------------------------------------------------------------------------- #
 def _do_http(f: Finding, method: str, url: str, *, headers=None, auth=None,
              ok_codes=(200,), cfg: Config) -> None:
     """Uma requisição mínima com retry/backoff para tolerar falhas transitórias."""
