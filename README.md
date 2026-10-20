@@ -30,4 +30,4 @@ Raw secret material is not included in this copy. Detection fixtures intentional
 
 ## License
 
-No open-source license has been granted. Redistribution terms remain to be defined.
+Project-authored source code is licensed under the [MIT License](LICENSE). Third-party components and datasets retain their respective rights and licenses.
