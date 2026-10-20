@@ -1,79 +1,48 @@
 # Code Exposure Scanner
 
-**Scoped code inspection, sanitized findings and recoverable defensive workflows.**
-
 ![Language: Python](https://img.shields.io/badge/Language-Python-3776AB?style=flat-square&logo=python) ![Storage: PostgreSQL](https://img.shields.io/badge/Storage-PostgreSQL-555555?style=flat-square) [![License: MIT](https://img.shields.io/badge/License-MIT-555555?style=flat-square)](LICENSE)
 
-[Overview](#overview) · [Quickstart](#quickstart) · [Example](#example) · [Validation](#validation) · [Documentation](#documentation)
+A defensive code-exposure pipeline for authorized repository review: discover sources, scan current files and history, retain findings with evidence, and prepare sanitized reports for review.
 
-## Overview
+The important distinction is between **a detection candidate**, **its source evidence** and **a disclosure decision**. They have separate modules and should not be treated as one automatic action.
 
-A defensive pipeline for authorized code-secret discovery, sanitized findings and responsible disclosure workflows.
-
-**Stack:** Python · PostgreSQL · Redis Streams · SQLite paths · HTTP API · Docker
-
-## Separate detection from disclosure
-
-| Component | Behavior |
-| --- | --- |
-| Scope | Repository discovery and immutable blob retrieval identify the exact input being inspected. |
-| Detect | Pattern and structural detectors produce findings for review. |
-| Recover | Queue/state components track work separately from optional notification paths. |
-
-## Processing path
+## Pipeline and persistence
 
 ```mermaid
 flowchart LR
-  N0["Authorized repository scope"]
-  N1["immutable source/history scan"]
-  N2["local detection"]
-  N3["sanitized storage"]
-  N4["private review/disclosure"]
-N0 --> N1 --> N2 --> N3 --> N4
+  Source[Authorized repository] --> Ingest[Source ingestion]
+  Ingest --> Head[HEAD scan]
+  Ingest --> History[History scan]
+  Head --> Policy[Scope and queue policies]
+  History --> Policy
+  Policy --> Findings[(Finding and evidence storage)]
+  Findings --> API[API and dashboard]
+  Findings --> Review[Reviewed sanitized report]
 ```
 
-## Quickstart
+[scan_policy.py](secret_hunter/scan_policy.py) restricts the distributed scanner's retained categories and excludes dependency/vendor paths. Its wallet categories and catalogued AI-provider credentials are narrower than an unrestricted generic secret search. [queue_policy.py](secret_hunter/queue_policy.py) controls work selection; [evidence.py](secret_hunter/evidence.py) and storage modules retain the finding context.
+
+Redis Streams, PostgreSQL and SQLite serve different execution/storage paths. Configuration determines which path is active; installing the package does not provision the distributed service.
+
+## Local setup before any collection
 
 ```console
 python -m venv .venv
-# Activate .venv, then:
-python -m pip install -e .
+python -m pip install -r requirements.txt
 python -m compileall -q secret_hunter
 ```
 
-The commands above install prerequisites or run the specified offline checks. Live collection, cloud operations, messaging and trading are separate operational steps when present.
+Review [.env.example](.env.example), the [CLI](secret_hunter/cli.py) and [API](secret_hunter/api.py) before starting discovery. Keep authorization scope explicit and reports redacted. Credential validation adapters and notification/disclosure code exist in the source; a candidate must not be tested or disclosed merely because a detector matched it.
 
-## Example
+## Where the engineering lives
 
-**Inspect the workflow**
+- [head_scan.py](secret_hunter/head_scan.py) and [history_scan.py](secret_hunter/history_scan.py): different source surfaces.
+- [event_bus.py](secret_hunter/event_bus.py): distributed event boundary.
+- [disclosure.py](secret_hunter/disclosure.py): separate reporting workflow.
+- [tests](tests): policy, recovery, detection and integration cases. Some require external services; source compilation is not a substitute for those tests.
 
-Follow one authorized repository through source retrieval, detection and sanitized finding storage. Review candidate confidence and false-positive context before disclosure. The documented quickstart installs and checks Python syntax; it does not initiate repository discovery or validate a credential.
+This repository provides analysis tooling, not proof that a matched credential is active, that every secret format is detectable, or that a disclosure has been authorized.
 
-## Configuration and storage
+**Technology:** Python · PostgreSQL · Redis Streams · SQLite paths · HTTP API · Docker
 
-[config.example.yaml](config.example.yaml) and [.env.example](.env.example) define scope, quotas and secret-file paths. PostgreSQL tracks jobs/findings; Redis Streams transports events. Raw-evidence modes can carry sensitive material and need separate retention/access controls.
-
-## Repository guide
-
-| Location | Responsibility |
-| --- | --- |
-| [secret_hunter/cli.py](secret_hunter/cli.py) | CLI orchestration |
-| [secret_hunter/config.py](secret_hunter/config.py) | Configuration |
-| [secret_hunter/ai_detection/scanner.py](secret_hunter/ai_detection/scanner.py) | Detection boundary |
-| [secret_hunter/schema.sql](secret_hunter/schema.sql) | Persistence schema |
-
-## Validation
-
-The quickstart lists the declared checks. No passing CI or coverage claim is implied by the technology badges.
-
-## Scope and operational boundaries
-
-Candidate detection is not proof of a live credential. Live discovery, validation and notification are separate operations. Example fixtures contain invalid markers; never substitute a real secret in a shared fixture.
-
-## Documentation
-
-- The repository guide above links directly to the implementation and configuration files.
-
-## License and attribution
-
-Project-authored source code is licensed under the [MIT License](LICENSE). Third-party components and datasets retain their respective rights and licenses.
+Project-authored source: [MIT](LICENSE). Third-party components retain their own notices and terms.
